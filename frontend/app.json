@@ -11,12 +11,13 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Save attendance snapshots if needed"
+        "NSPhotoLibraryUsageDescription": "Choose profile photo for your account"
       }
     },
     "android": {
       "permissions": [
-        "INTERNET"
+        "INTERNET",
+        "READ_MEDIA_IMAGES"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/shree-vedha-logo.png",

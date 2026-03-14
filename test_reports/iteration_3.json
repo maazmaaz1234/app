@@ -1,0 +1,64 @@
+{
+  "summary": "Ran backend pytest regression against preview URL and mobile-first Expo UI validation for updated Course→Subjects→Students flows. Backend critical paths passed end-to-end including reset-all, admin password-protected delete operations, student/admin password changes, notifications, and insights structure. Frontend validated core auth, hidden forgot-password behavior, course/subject creation, student approval, and admin student edit/password change, but full UI completion was blocked by limited selector coverage in chip/list interactions.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/admin/subjects",
+        "issue": "Observed KeyError('course_id') in backend logs when legacy/inconsistent subject documents exist; endpoint can return 500 instead of handling malformed records safely."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Manage screen chips/select rows (course/subject/student/present-student selectors)",
+        "issue": "Missing testID attributes on interactive chips/rows prevents stable mobile automation for assign/bulk-attendance flows.",
+        "testID": "missing",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Admin password field in Student Management",
+        "issue": "Generated selector was unstable for automation; explicit testID needed for reliable delete/password-change verification.",
+        "testID": "missing-explicit",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_attendance_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/frontend_load_check_2.jpeg",
+    "/app/test_reports/ui_admin_logged_in_iteration3.jpeg",
+    "/app/test_reports/ui_failure_iteration3_retry1.jpeg",
+    "/app/test_reports/ui_failure_iteration3_retry2.jpeg"
+  ],
+  "action_items": [
+    "Add explicit testID to Chip/RoleChip/selectable attendance rows and admin password action input to unblock complete mobile regression automation.",
+    "Harden /api/admin/subjects against malformed legacy documents missing course_id (skip/clean invalid docs instead of 500).",
+    "Align frontend env contract to include/use EXPO_BACKEND_URL consistently (currently .env and api.ts rely on EXPO_PUBLIC_BACKEND_URL).",
+    "Main agent should manually re-run remaining UI checks after testID updates: assign subject + bulk attendance selection + student self profile/password + admin notifications/insights verification in one pass."
+  ],
+  "critical_code_review_comments": [
+    "Frontend still has several interactive elements without explicit testID, reducing test reliability for mobile-first Expo web automation.",
+    "backend/server.py get_subjects sorts by item['course_id'] without defensive fallback; malformed existing data can crash endpoint.",
+    "Service config deviates from stated EXPO_BACKEND_URL contract by depending on EXPO_PUBLIC_BACKEND_URL in runtime/env."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_attendance_api.py",
+    "/app/test_reports/iteration_3.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "72%"
+  },
+  "seed_data_creation": "Created TEST_* course, subject, student records through backend tests and UI; data retained for follow-up retest.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression is green via /app/backend/tests/test_attendance_api.py. UI run reached admin student-edit/password-change but blocked later by missing testIDs for chip/list interactions; use explicit testIDs before retrying full mobile playbook.",
+  "rca_of_issue": "UI automation failures were primarily selector-level, caused by missing explicit testIDs on dynamic chip/row components and reliance on mutable text labels. Separately, backend logs confirm /api/admin/subjects can fail with KeyError when old subject docs lack course_id, indicating migration/data-shape hardening is needed."
+}

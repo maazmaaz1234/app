@@ -4,7 +4,8 @@ import {
   AttendanceRecord,
   AuthResponse,
   CollegeProfile,
-  Semester,
+  Course,
+  NotificationItem,
   StudentInsightGroup,
   Subject,
   SubjectInsight,
@@ -53,6 +54,7 @@ export function signUp(data: {
   phone_number: string;
   password: string;
   role: "admin" | "student";
+  course_id?: string | null;
 }) {
   return request<AuthResponse>("/auth/signup", { method: "POST", body: data });
 }
@@ -108,7 +110,7 @@ export function updateCollegeProfile(
 }
 
 export function createSemester(token: string, name: string) {
-  return request<Semester>("/admin/semesters", {
+  return request<Course>("/admin/courses", {
     method: "POST",
     token,
     body: { name },
@@ -116,10 +118,18 @@ export function createSemester(token: string, name: string) {
 }
 
 export function getSemesters(token: string) {
-  return request<Semester[]>("/admin/semesters", { token });
+  return request<Course[]>("/admin/courses", { token });
 }
 
-export function createSubject(token: string, payload: { semester_id: string; name: string; code: string }) {
+export function deleteCourse(token: string, courseId: string, admin_password: string) {
+  return request<{ message: string }>(`/admin/courses/${courseId}`, {
+    method: "DELETE",
+    token,
+    body: { admin_password },
+  });
+}
+
+export function createSubject(token: string, payload: { course_id: string; name: string; code: string }) {
   return request<Subject>("/admin/subjects", {
     method: "POST",
     token,
@@ -128,15 +138,23 @@ export function createSubject(token: string, payload: { semester_id: string; nam
 }
 
 export function getSubjects(token: string, semesterId?: string) {
-  const query = semesterId ? `?semester_id=${encodeURIComponent(semesterId)}` : "";
+  const query = semesterId ? `?course_id=${encodeURIComponent(semesterId)}` : "";
   return request<Subject[]>(`/admin/subjects${query}`, { token });
 }
 
+export function deleteSubject(token: string, subjectId: string, admin_password: string) {
+  return request<{ message: string }>(`/admin/subjects/${subjectId}`, {
+    method: "DELETE",
+    token,
+    body: { admin_password },
+  });
+}
+
 export function assignSubjects(token: string, payload: { student_id: string; subject_ids: string[] }) {
-  return request<{ message: string }>("/admin/assign-subjects", {
+  return request<{ message: string }>(`/admin/students/${payload.student_id}/assign-subjects`, {
     method: "POST",
     token,
-    body: payload,
+    body: { subject_ids: payload.subject_ids },
   });
 }
 
@@ -155,6 +173,22 @@ export function markBulkAttendance(
   });
 }
 
+export function updateAttendance(token: string, recordId: string, status: "present" | "absent") {
+  return request<{ message: string }>(`/admin/attendance/${recordId}`, {
+    method: "PUT",
+    token,
+    body: { status },
+  });
+}
+
+export function deleteAttendance(token: string, recordId: string, admin_password: string) {
+  return request<{ message: string }>(`/admin/attendance/${recordId}`, {
+    method: "DELETE",
+    token,
+    body: { admin_password },
+  });
+}
+
 export function getAdminAttendance(token: string, filters?: { subject_id?: string; student_id?: string }) {
   const chunks: string[] = [];
   if (filters?.subject_id) chunks.push(`subject_id=${encodeURIComponent(filters.subject_id)}`);
@@ -167,15 +201,55 @@ export function getAdminInsights(token: string) {
   return request<{ insights: StudentInsightGroup[] }>("/admin/insights", { token });
 }
 
-export function importCsv(token: string, csvText: string) {
-  return request<{ message: string; students_created: number; students_updated: number; subjects_created: number }>(
-    "/admin/import-csv",
-    {
-      method: "POST",
-      token,
-      body: { csv_text: csvText },
-    }
-  );
+export function getNotifications(token: string) {
+  return request<NotificationItem[]>("/admin/notifications", { token });
+}
+
+export function markNotificationRead(token: string, notificationId: string) {
+  return request<{ message: string }>(`/admin/notifications/${notificationId}/read`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function deleteStudent(token: string, studentId: string, admin_password: string) {
+  return request<{ message: string }>(`/admin/students/${studentId}`, {
+    method: "DELETE",
+    token,
+    body: { admin_password },
+  });
+}
+
+export function adminUpdateStudentProfile(
+  token: string,
+  studentId: string,
+  payload: { name?: string; course_id?: string | null; profile_image_base64?: string | null }
+) {
+  return request<{ message: string }>(`/admin/students/${studentId}/profile`, {
+    method: "PATCH",
+    token,
+    body: payload,
+  });
+}
+
+export function adminChangeStudentPassword(
+  token: string,
+  studentId: string,
+  payload: { admin_password: string; new_password: string }
+) {
+  return request<{ message: string }>(`/admin/students/${studentId}/change-password`, {
+    method: "POST",
+    token,
+    body: payload,
+  });
+}
+
+export function resetAllData(token: string, admin_password: string) {
+  return request<{ message: string; default_admin_phone: string; default_admin_password: string }>("/admin/reset-all", {
+    method: "POST",
+    token,
+    body: { admin_password },
+  });
 }
 
 export function getStudentSubjects(token: string) {
@@ -189,6 +263,22 @@ export function getStudentAttendance(token: string, subjectId?: string) {
 
 export function getStudentInsights(token: string) {
   return request<SubjectInsight[]>("/student/insights", { token });
+}
+
+export function studentUpdateProfile(token: string, payload: { name?: string; course_id?: string | null; profile_image_base64?: string | null }) {
+  return request<{ message: string }>("/student/profile", {
+    method: "PATCH",
+    token,
+    body: payload,
+  });
+}
+
+export function studentChangePassword(token: string, payload: { current_password: string; new_password: string }) {
+  return request<{ message: string }>("/student/password", {
+    method: "PATCH",
+    token,
+    body: payload,
+  });
 }
 
 const routePlaceholder = { api: "internal" };

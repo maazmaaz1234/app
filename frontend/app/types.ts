@@ -6,7 +6,8 @@ export interface User {
   phone_number: string;
   role: UserRole;
   approved: boolean;
-  semester_id?: string | null;
+  course_id?: string | null;
+  profile_image_base64?: string;
   created_at: string;
 }
 
@@ -16,15 +17,15 @@ export interface AuthResponse {
   user: User;
 }
 
-export interface Semester {
-  semester_id: string;
+export interface Course {
+  course_id: string;
   name: string;
   created_at: string;
 }
 
 export interface Subject {
   subject_id: string;
-  semester_id: string;
+  course_id: string;
   name: string;
   code: string;
   created_at: string;
@@ -59,11 +60,21 @@ export interface SubjectInsight {
 }
 
 export interface StudentInsightGroup {
-  semester_id: string;
-  semester_name: string;
+  course_id: string;
+  course_name: string;
   student_id: string;
   student_name: string;
+  profile_image_base64?: string;
   subjects: SubjectInsight[];
+}
+
+export interface NotificationItem {
+  notification_id: string;
+  message: string;
+  event_type: string;
+  student_id?: string;
+  created_at: string;
+  read: boolean;
 }
 
 export interface CollegeProfile {
