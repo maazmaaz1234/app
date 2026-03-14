@@ -1,0 +1,131 @@
+{
+  "app_name": "Shree vedha attendance management",
+  "theme": "dark",
+  "design_philosophy": {
+    "archetype": "The Performance Pro (Obsidian & Electric Blue)",
+    "vibe": "Premium, Academic, High-Efficiency",
+    "core_principles": [
+      "No default centered layouts - use asymmetry and tension",
+      "Obsidian backgrounds (#09090b) over pure black",
+      "Electric Blue accents (#6366f1) for primary actions",
+      "Glassmorphism for depth (Cards, Modals)",
+      "High contrast text for accessibility"
+    ]
+  },
+  "colors": {
+    "background": "#09090b",
+    "foreground": "#fafafa",
+    "card": "#18181b",
+    "card_foreground": "#fafafa",
+    "popover": "#09090b",
+    "popover_foreground": "#fafafa",
+    "primary": "#6366f1",
+    "primary_foreground": "#ffffff",
+    "secondary": "#27272a",
+    "secondary_foreground": "#fafafa",
+    "muted": "#27272a",
+    "muted_foreground": "#a1a1aa",
+    "accent": "#27272a",
+    "accent_foreground": "#fafafa",
+    "destructive": "#ef4444",
+    "destructive_foreground": "#fafafa",
+    "border": "#27272a",
+    "input": "#27272a",
+    "ring": "#6366f1"
+  },
+  "typography": {
+    "font_family_heading": "Outfit",
+    "font_family_body": "Inter",
+    "scale": {
+      "h1": "text-4xl font-bold tracking-tight",
+      "h2": "text-3xl font-semibold tracking-tight",
+      "h3": "text-2xl font-semibold",
+      "h4": "text-xl font-medium",
+      "p": "text-base text-zinc-400 leading-relaxed",
+      "small": "text-sm text-zinc-500 font-medium"
+    }
+  },
+  "layout": {
+    "spacing": {
+      "page_padding": "px-6 py-8",
+      "card_padding": "p-6",
+      "gap_default": "gap-6",
+      "gap_tight": "gap-3"
+    },
+    "radius": {
+      "default": "rounded-xl",
+      "large": "rounded-2xl",
+      "full": "rounded-full"
+    }
+  },
+  "components": {
+    "Button": {
+      "default": "bg-indigo-500 active:bg-indigo-600 px-6 py-4 rounded-xl flex-row items-center justify-center shadow-[0_0_20px_rgba(99,102,241,0.3)]",
+      "ghost": "bg-transparent active:bg-zinc-800/50 border border-zinc-800",
+      "text_style": "text-white font-semibold text-base"
+    },
+    "Card": {
+      "base": "bg-zinc-900/50 border border-white/10 rounded-2xl p-5 backdrop-blur-md shadow-sm"
+    },
+    "Input": {
+      "base": "bg-zinc-900/50 border border-zinc-800 text-white px-4 py-4 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 placeholder-zinc-500"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "bg-zinc-900/80 backdrop-blur-xl border-t border-white/10",
+    "gradients": {
+      "primary": "bg-gradient-to-r from-indigo-500 to-violet-600",
+      "subtle": "bg-gradient-to-b from-zinc-800/20 to-zinc-900/20"
+    }
+  },
+  "assets": {
+    "images": [
+      {
+        "category": "auth_background",
+        "url": "https://images.unsplash.com/photo-1759193529611-40ef867726fd",
+        "description": "Modern dark campus architecture for login screen background"
+      },
+      {
+        "category": "dashboard_hero",
+        "url": "https://images.unsplash.com/photo-1760224254103-3dcc15e4ad9d",
+        "description": "Abstract blue light streaks for dashboard header"
+      },
+      {
+        "category": "developer_bg",
+        "url": "https://images.unsplash.com/photo-1770734360042-676ef707d022",
+        "description": "Coding setup for developer profile background"
+      }
+    ],
+    "icons": "lucide-react-native"
+  },
+  "features": {
+    "charts": "Use react-native-chart-kit for attendance analytics (Pie Chart for %, Line Chart for history)",
+    "developer_info": {
+      "name": "Mohammed Maaz",
+      "handle": "@_themaaz",
+      "link": "https://instagram.com/_themaaz"
+    }
+  },
+  "instructions_to_main_agent": {
+    "setup": [
+      "Install nativewind and tailwindcss for styling: `yarn add nativewind tailwindcss`",
+      "Install icons: `yarn add lucide-react-native`",
+      "Install charts: `yarn add react-native-chart-kit react-native-svg`",
+      "Run `npx tailwindcss init` and configure `tailwind.config.js` with the provided colors",
+      "Ensure `babel.config.js` includes `nativewind/babel` plugin"
+    ],
+    "implementation_rules": [
+      "Use `SafeAreaView` from `react-native-safe-area-context` for all screen containers",
+      "Do NOT use standard Shadcn web components. Build 'Shadcn-like' components using View/Text + NativeWind classes",
+      "Use `ImageBackground` for the Auth screen with the provided `auth_background` image",
+      "Developer info must be clickable and open Instagram profile"
+    ]
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Do not use gradients for text (hard to read on mobile)",
+    "Use generous padding (p-6, p-8) for touch targets",
+    "Ensure 44px min height for all interactive elements",
+    "Use Skeleton loaders while fetching data",
+    "Always validate data-testid on interactive elements"
+  ]
+}
