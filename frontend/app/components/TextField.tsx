@@ -8,11 +8,13 @@ interface TextFieldProps extends TextInputProps {
 }
 
 export function TextField({ label, ...inputProps }: TextFieldProps) {
+  const generatedTestId = inputProps.testID || `input-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
     <View style={styles.wrapper}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
         {...inputProps}
+        testID={generatedTestId}
         placeholderTextColor={theme.mutedText}
         style={[styles.input, inputProps.style]}
       />

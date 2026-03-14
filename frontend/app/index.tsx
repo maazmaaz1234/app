@@ -19,7 +19,6 @@ import { GlassCard } from "./components/GlassCard";
 import { LoaderSkeleton } from "./components/LoaderSkeleton";
 import { PrimaryButton } from "./components/PrimaryButton";
 import { TextField } from "./components/TextField";
-import { COLLEGE_LOGO_IMAGE } from "./constants/embeddedImages";
 import { theme } from "./constants/theme";
 import {
   approveStudent,
@@ -53,6 +52,7 @@ type AdminTab = "home" | "manage" | "insights" | "settings" | "developer";
 type StudentTab = "home" | "history" | "insights" | "settings" | "developer";
 
 const SESSION_KEY = "svam_session";
+const LOGO_ASSET = require("../assets/images/shree-vedha-logo.png");
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -242,7 +242,7 @@ function AuthScreen({
     <SafeAreaView style={styles.safeRoot}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.flex1}>
         <ScrollView contentContainerStyle={styles.authContainer} keyboardShouldPersistTaps="handled">
-          <Image source={{ uri: COLLEGE_LOGO_IMAGE }} style={styles.authLogo} />
+          <Image source={LOGO_ASSET} style={styles.authLogo} resizeMode="contain" />
           <Text style={styles.authTitle}>Shree Vedha College Attendance Management</Text>
 
           <GlassCard style={styles.authCard}>
@@ -339,7 +339,7 @@ function PendingApproval({ onLogout, onRefresh }: { onLogout: () => Promise<void
     <SafeAreaView style={styles.safeRoot}>
       <View style={styles.centerWrap}>
         <GlassCard style={styles.pendingCard}>
-          <Image source={{ uri: COLLEGE_LOGO_IMAGE }} style={styles.pendingLogo} />
+          <Image source={LOGO_ASSET} style={styles.pendingLogo} resizeMode="contain" />
           <Text style={styles.sectionTitle}>Approval Pending</Text>
           <Text style={styles.smallText}>Your student account will unlock after admin approval.</Text>
           <PrimaryButton title="Check Approval" icon="refresh" onPress={onRefresh} />
@@ -448,7 +448,7 @@ function AdminApp({
     );
   };
 
-  const logoUri = profile?.logo_base64 ? profile.logo_base64 : COLLEGE_LOGO_IMAGE;
+  const logoSource = profile?.logo_base64 ? { uri: profile.logo_base64 } : LOGO_ASSET;
   const tabs: { key: AdminTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { key: "home", label: "Home", icon: "home-outline" },
     { key: "manage", label: "Manage", icon: "create-outline" },
@@ -476,7 +476,7 @@ function AdminApp({
           <ScrollView contentContainerStyle={styles.screenBody}>
             <GlassCard>
               <View style={styles.logoTitleRow}>
-                <Image source={{ uri: logoUri }} style={styles.heroLogo} />
+                <Image source={logoSource} style={styles.heroLogo} resizeMode="contain" />
                 <View style={styles.flex1}>
                   <Text style={styles.sectionTitle}>{profile?.college_name || "Shree Vedha College"}</Text>
                   <Text style={styles.smallText}>Attendance Management Dashboard</Text>
@@ -885,7 +885,7 @@ function StudentApp({
     refreshAll();
   }, [refreshAll]);
 
-  const logoUri = profile?.logo_base64 ? profile.logo_base64 : COLLEGE_LOGO_IMAGE;
+  const logoSource = profile?.logo_base64 ? { uri: profile.logo_base64 } : LOGO_ASSET;
   const tabs: { key: StudentTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { key: "home", label: "Home", icon: "home-outline" },
     { key: "history", label: "History", icon: "calendar-outline" },
@@ -915,7 +915,7 @@ function StudentApp({
           <ScrollView contentContainerStyle={styles.screenBody}>
             <GlassCard>
               <View style={styles.logoTitleRow}>
-                <Image source={{ uri: logoUri }} style={styles.heroLogo} />
+                <Image source={logoSource} style={styles.heroLogo} resizeMode="contain" />
                 <View style={styles.flex1}>
                   <Text style={styles.sectionTitle}>{profile?.college_name || "Shree Vedha College"}</Text>
                   <Text style={styles.smallText}>Student Attendance Overview</Text>
@@ -1020,7 +1020,7 @@ function DeveloperCard() {
   return (
     <ScrollView contentContainerStyle={styles.screenBody}>
       <GlassCard>
-        <Image source={{ uri: COLLEGE_LOGO_IMAGE }} style={styles.pendingLogo} />
+        <Image source={LOGO_ASSET} style={styles.pendingLogo} resizeMode="contain" />
         <Text style={styles.sectionTitle}>Developer</Text>
         <Text style={styles.rowTitle}>Mohammed Maaz</Text>
         <PrimaryButton
