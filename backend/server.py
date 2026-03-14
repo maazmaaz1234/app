@@ -652,6 +652,8 @@ async def mark_bulk_attendance(input_data: BulkAttendanceInput, user: Dict = Dep
 async def admin_attendance(
     subject_id: Optional[str] = Query(default=None),
     student_id: Optional[str] = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=300, ge=1, le=1000),
     _: Dict = Depends(admin_user),
 ):
     query: Dict[str, str] = {}
@@ -659,8 +661,13 @@ async def admin_attendance(
         query["subject_id"] = subject_id
     if student_id:
         query["student_id"] = student_id
-    records = await db.attendance.find(query, {"_id": 0}).to_list(10000)
-    records.sort(key=lambda item: (item["date"], item["student_name"]), reverse=True)
+    records = (
+        await db.attendance.find(query, {"_id": 0})
+        .sort([("date", -1), ("created_at", -1)])
+        .skip(skip)
+        .limit(limit)
+        .to_list(length=limit)
+    )
     return [AttendanceRecord(**item) for item in records]
 
 
@@ -747,22 +754,38 @@ async def admin_insights(_: Dict = Depends(admin_user)):
     subjects = await db.subjects.find({}, {"_id": 0, "subject_id": 1, "name": 1, "course_id": 1}).to_list(4000)
     subject_map = {item["subject_id"]: item for item in subjects}
     assignments = await db.student_subject_assignments.find({}, {"_id": 0}).to_list(5000)
-    attendance = await db.attendance.find(
-        {"subject_id": {"$exists": True}},
-        {"_id": 0, "student_id": 1, "subject_id": 1, "status": 1},
-    ).to_list(50000)
-
     stats: Dict[str, Dict[str, Dict[str, int]]] = {}
-    for record in attendance:
-        student_id = record["student_id"]
-        subject_id = record["subject_id"]
+    stats_cursor = db.attendance.aggregate(
+        [
+            {"$match": {"subject_id": {"$exists": True}}},
+            {
+                "$group": {
+                    "_id": {
+                        "student_id": "$student_id",
+                        "subject_id": "$subject_id",
+                    },
+                    "total": {"$sum": 1},
+                    "present": {
+                        "$sum": {
+                            "$cond": [{"$eq": ["$status", "present"]}, 1, 0]
+                        }
+                    },
+                }
+            },
+        ]
+    )
+    async for row in stats_cursor:
+        pair = row.get("_id", {})
+        student_id = pair.get("student_id")
+        subject_id = pair.get("subject_id")
+        if not student_id or not subject_id:
+            continue
         if student_id not in stats:
             stats[student_id] = {}
-        if subject_id not in stats[student_id]:
-            stats[student_id][subject_id] = {"present": 0, "total": 0}
-        stats[student_id][subject_id]["total"] += 1
-        if record["status"] == "present":
-            stats[student_id][subject_id]["present"] += 1
+        stats[student_id][subject_id] = {
+            "present": int(row.get("present", 0)),
+            "total": int(row.get("total", 0)),
+        }
 
     assignment_map = {item["student_id"]: item.get("subject_ids", []) for item in assignments}
     insights: List[StudentInsight] = []
@@ -790,13 +813,8 @@ async def admin_insights(_: Dict = Depends(admin_user)):
         course_id = student.get("course_id") or "unassigned"
         if not subject_items:
             continue
-
-        calendar_records = [record for record in attendance if record.get("student_id") == student["user_id"]]
-
-        # append total attendance count in subject names for admin detail visibility
         for subject_item in subject_items:
-            count = len([item for item in calendar_records if item.get("subject_id") == subject_item.subject_id])
-            subject_item.subject_name = f"{subject_item.subject_name} (Total: {count})"
+            subject_item.subject_name = f"{subject_item.subject_name} (Total: {subject_item.total})"
 
         insights.append(
             StudentInsight(
@@ -877,13 +895,20 @@ async def student_subjects(user: Dict = Depends(approved_student_user)):
 @api_router.get("/student/attendance", response_model=List[AttendanceRecord])
 async def student_attendance(
     subject_id: Optional[str] = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=300, ge=1, le=1000),
     user: Dict = Depends(approved_student_user),
 ):
     query: Dict[str, str] = {"student_id": user["user_id"]}
     if subject_id:
         query["subject_id"] = subject_id
-    records = await db.attendance.find(query, {"_id": 0}).to_list(10000)
-    records.sort(key=lambda item: item["date"], reverse=True)
+    records = (
+        await db.attendance.find(query, {"_id": 0})
+        .sort([("date", -1), ("created_at", -1)])
+        .skip(skip)
+        .limit(limit)
+        .to_list(length=limit)
+    )
     return [AttendanceRecord(**item) for item in records]
 
 
@@ -900,17 +925,34 @@ async def student_insights(user: Dict = Depends(approved_student_user)):
     ).to_list(1000)
     subject_name_map = {item["subject_id"]: item["name"] for item in subjects}
 
-    records = await db.attendance.find(
-        {"student_id": user["user_id"], "subject_id": {"$in": subject_ids}},
-        {"_id": 0, "subject_id": 1, "status": 1},
-    ).to_list(20000)
-
     stats: Dict[str, Dict[str, int]] = {sid: {"present": 0, "total": 0} for sid in subject_ids}
-    for record in records:
-        sid = record["subject_id"]
-        stats[sid]["total"] += 1
-        if record["status"] == "present":
-            stats[sid]["present"] += 1
+    stats_cursor = db.attendance.aggregate(
+        [
+            {
+                "$match": {
+                    "student_id": user["user_id"],
+                    "subject_id": {"$in": subject_ids},
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$subject_id",
+                    "total": {"$sum": 1},
+                    "present": {
+                        "$sum": {
+                            "$cond": [{"$eq": ["$status", "present"]}, 1, 0]
+                        }
+                    },
+                }
+            },
+        ]
+    )
+    async for row in stats_cursor:
+        sid = row.get("_id")
+        if sid not in stats:
+            continue
+        stats[sid]["total"] = int(row.get("total", 0))
+        stats[sid]["present"] = int(row.get("present", 0))
 
     output: List[SubjectPercent] = []
     for sid in subject_ids:

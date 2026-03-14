@@ -193,6 +193,7 @@ export function getAdminAttendance(token: string, filters?: { subject_id?: strin
   const chunks: string[] = [];
   if (filters?.subject_id) chunks.push(`subject_id=${encodeURIComponent(filters.subject_id)}`);
   if (filters?.student_id) chunks.push(`student_id=${encodeURIComponent(filters.student_id)}`);
+  chunks.push("limit=1000");
   const query = chunks.length ? `?${chunks.join("&")}` : "";
   return request<AttendanceRecord[]>(`/admin/attendance${query}`, { token });
 }
@@ -257,7 +258,9 @@ export function getStudentSubjects(token: string) {
 }
 
 export function getStudentAttendance(token: string, subjectId?: string) {
-  const query = subjectId ? `?subject_id=${encodeURIComponent(subjectId)}` : "";
+  const chunks: string[] = ["limit=1000"];
+  if (subjectId) chunks.push(`subject_id=${encodeURIComponent(subjectId)}`);
+  const query = `?${chunks.join("&")}`;
   return request<AttendanceRecord[]>(`/student/attendance${query}`, { token });
 }
 
