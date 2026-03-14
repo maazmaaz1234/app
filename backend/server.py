@@ -791,10 +791,7 @@ async def admin_insights(_: Dict = Depends(admin_user)):
         if not subject_items:
             continue
 
-        calendar_records = await db.attendance.find(
-            {"student_id": student["user_id"]},
-            {"_id": 0, "date": 1, "status": 1, "subject_id": 1},
-        ).to_list(5000)
+        calendar_records = [record for record in attendance if record.get("student_id") == student["user_id"]]
 
         # append total attendance count in subject names for admin detail visibility
         for subject_item in subject_items:
