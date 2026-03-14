@@ -76,6 +76,15 @@ Build a professional, blue-themed mobile attendance app for **one college only (
 - Blue professional palette updated and app logo retained
 - Added image picker integration (`expo-image-picker`) for profile images
 - Added explicit testIDs for automation-critical controls
+- Added **confirm popup** dialogs for destructive actions (delete/reset)
+- Added calendar visualization upgrade in admin insights:
+  - Grid/List toggle
+  - Month filter input (`YYYY-MM`)
+  - Last selected calendar view persistence
+- Added inline “sticker + red text” validation hints for phone/password/date fields
+- Added **At Risk Students (<75%)** card on admin home
+- Added **At Risk Subjects (<75%)** highlight on student home
+- Updated UI to lighter pastel-blue theme for faster, cleaner readability
 
 ## Prioritized Backlog
 ### P0 (Must)

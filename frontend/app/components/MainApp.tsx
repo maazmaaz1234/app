@@ -5,6 +5,7 @@ import * as Linking from "expo-linking";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -64,6 +65,7 @@ type AdminTab = "home" | "manage" | "insights" | "notifications" | "settings" | 
 type StudentTab = "home" | "history" | "insights" | "profile" | "settings" | "developer";
 
 const SESSION_KEY = "svam_session";
+const CALENDAR_VIEW_KEY = "svam_calendar_view";
 const LOGO_ASSET = require("../../assets/images/shree-vedha-logo.png");
 
 function today() {
@@ -73,6 +75,27 @@ function today() {
 function formatDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
+function isValidPhone(value: string) {
+  return /^\+?\d{10,15}$/.test(value.trim());
+}
+
+function isValidPassword(value: string) {
+  return value.trim().length >= 6;
+}
+
+function isValidDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime());
+}
+
+function confirmAction(title: string, message: string, onConfirm: () => void) {
+  Alert.alert(title, message, [
+    { text: "Cancel", style: "cancel" },
+    { text: "Confirm", style: "destructive", onPress: onConfirm },
+  ]);
 }
 
 async function pickBase64Image(): Promise<string | null> {
@@ -240,10 +263,12 @@ function AuthScreen({
   const [password, setPassword] = useState("");
 
   const disableSubmit = useMemo(() => {
+    const phoneOk = isValidPhone(phone);
+    const passwordOk = isValidPassword(password);
     if (mode === "signup") {
-      return !name.trim() || !phone.trim() || !password.trim();
+      return !name.trim() || !phoneOk || !passwordOk;
     }
-    return !phone.trim() || !password.trim();
+    return !phoneOk || !passwordOk;
   }, [mode, name, password, phone]);
 
   return (
@@ -280,7 +305,9 @@ function AuthScreen({
               placeholder="+91XXXXXXXXXX"
               keyboardType="phone-pad"
             />
+            {!isValidPhone(phone) && phone.trim() ? <ValidationHint text="Use valid phone format (+countrycode + number)" /> : null}
             <TextField label="Password" value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry />
+            {!isValidPassword(password) && password.trim() ? <ValidationHint text="Password must be at least 6 characters" /> : null}
 
             {message ? <Text style={styles.messageText}>{message}</Text> : null}
 
@@ -349,6 +376,8 @@ function AdminApp({
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [insights, setInsights] = useState<StudentInsightGroup[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [calendarView, setCalendarView] = useState<"grid" | "list">("grid");
+  const [calendarMonth, setCalendarMonth] = useState(today().slice(0, 7));
 
   const [courseName, setCourseName] = useState("");
   const [subjectCourse, setSubjectCourse] = useState("");
@@ -425,6 +454,16 @@ function AdminApp({
   }, [selectedStudent, students]);
 
   useEffect(() => {
+    const loadCalendarPreference = async () => {
+      const stored = await AsyncStorage.getItem(CALENDAR_VIEW_KEY);
+      if (stored === "grid" || stored === "list") {
+        setCalendarView(stored);
+      }
+    };
+    loadCalendarPreference();
+  }, []);
+
+  useEffect(() => {
     const loadBulkStudents = async () => {
       if (!bulkSubject) return;
       try {
@@ -448,6 +487,16 @@ function AdminApp({
     { key: "settings", label: "Settings", icon: "settings-outline" },
     { key: "developer", label: "Dev", icon: "code-slash-outline" },
   ];
+
+  const atRiskStudents = useMemo(
+    () =>
+      insights.filter((student) => student.subjects.some((subject) => subject.percentage < 75)).map((student) => ({
+        name: student.student_name,
+        course: student.course_name,
+        riskySubjects: student.subjects.filter((subject) => subject.percentage < 75),
+      })),
+    [insights]
+  );
 
   return (
     <SafeAreaView style={styles.safeRoot}>
@@ -482,6 +531,23 @@ function AdminApp({
               <StatCard label="Students" value={`${students.length}`} />
               <StatCard label="Pending" value={`${pendingStudents.length}`} />
             </View>
+
+            <GlassCard>
+              <Text style={styles.sectionTitle}>At Risk Students (&lt;75%)</Text>
+              {!atRiskStudents.length ? <Text style={styles.smallText}>No at-risk students right now.</Text> : null}
+              <View style={styles.listWrap}>
+                {atRiskStudents.map((item, index) => (
+                  <View key={`${item.name}-${index}`} style={styles.riskCard}>
+                    <Text style={styles.rowTitle}>{item.name}</Text>
+                    <Text style={styles.smallText}>{item.course}</Text>
+                    <Text style={styles.riskText}>
+                      {item.riskySubjects.map((subject) => `${subject.subject_name.split(" (Total")[0]} ${subject.percentage.toFixed(1)}%`).join(" • ")}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </GlassCard>
+
             <GlassCard>
               <Text style={styles.sectionTitle}>Pending Approvals</Text>
               {!pendingStudents.length ? <Text style={styles.smallText}>No pending requests.</Text> : null}
@@ -545,20 +611,22 @@ function AdminApp({
                         title="Delete"
                         icon="delete"
                         variant="danger"
-                        onPress={async () => {
-                          if (!adminPasswordAction.trim()) {
-                            setMessage("Enter admin password first");
-                            return;
-                          }
-                          setBusy(true);
-                          try {
-                            await deleteCourse(token, course.course_id, adminPasswordAction.trim());
-                            await refreshAll();
-                          } catch (error) {
-                            setMessage(error instanceof Error ? error.message : "Delete failed");
-                            setBusy(false);
-                          }
-                        }}
+                        onPress={() =>
+                          confirmAction("Delete Course", `Delete ${course.name}?`, async () => {
+                            if (!adminPasswordAction.trim()) {
+                              setMessage("Enter admin password first");
+                              return;
+                            }
+                            setBusy(true);
+                            try {
+                              await deleteCourse(token, course.course_id, adminPasswordAction.trim());
+                              await refreshAll();
+                            } catch (error) {
+                              setMessage(error instanceof Error ? error.message : "Delete failed");
+                              setBusy(false);
+                            }
+                          })
+                        }
                       />
                     </View>
                   ))}
@@ -606,20 +674,22 @@ function AdminApp({
                         title="Delete"
                         icon="delete"
                         variant="danger"
-                        onPress={async () => {
-                          if (!adminPasswordAction.trim()) {
-                            setMessage("Enter admin password first");
-                            return;
-                          }
-                          setBusy(true);
-                          try {
-                            await deleteSubject(token, subject.subject_id, adminPasswordAction.trim());
-                            await refreshAll();
-                          } catch (error) {
-                            setMessage(error instanceof Error ? error.message : "Subject delete failed");
-                            setBusy(false);
-                          }
-                        }}
+                        onPress={() =>
+                          confirmAction("Delete Subject", `Delete ${subject.name}?`, async () => {
+                            if (!adminPasswordAction.trim()) {
+                              setMessage("Enter admin password first");
+                              return;
+                            }
+                            setBusy(true);
+                            try {
+                              await deleteSubject(token, subject.subject_id, adminPasswordAction.trim());
+                              await refreshAll();
+                            } catch (error) {
+                              setMessage(error instanceof Error ? error.message : "Subject delete failed");
+                              setBusy(false);
+                            }
+                          })
+                        }
                       />
                     </View>
                   ))}
@@ -699,6 +769,9 @@ function AdminApp({
                   testID="admin-password-action"
                   secureTextEntry
                 />
+                {!isValidPassword(adminPasswordAction) && adminPasswordAction.trim() ? (
+                  <ValidationHint text="Admin password must be at least 6 characters" />
+                ) : null}
 
                 <PrimaryButton
                   title="Change Student Password"
@@ -726,17 +799,19 @@ function AdminApp({
                   icon="account-remove"
                   variant="danger"
                   disabled={!selectedStudent || !adminPasswordAction.trim()}
-                  onPress={async () => {
-                    setBusy(true);
-                    try {
-                      await deleteStudent(token, selectedStudent, adminPasswordAction.trim());
-                      setSelectedStudent("");
-                      await refreshAll();
-                    } catch (error) {
-                      setMessage(error instanceof Error ? error.message : "Student delete failed");
-                      setBusy(false);
-                    }
-                  }}
+                  onPress={() =>
+                    confirmAction("Delete Student", "This will remove student and records. Continue?", async () => {
+                      setBusy(true);
+                      try {
+                        await deleteStudent(token, selectedStudent, adminPasswordAction.trim());
+                        setSelectedStudent("");
+                        await refreshAll();
+                      } catch (error) {
+                        setMessage(error instanceof Error ? error.message : "Student delete failed");
+                        setBusy(false);
+                      }
+                    })
+                  }
                 />
               </GlassCard>
 
@@ -788,6 +863,7 @@ function AdminApp({
                   ))}
                 </ScrollView>
                 <TextField label="Date" value={bulkDate} onChangeText={setBulkDate} placeholder="YYYY-MM-DD" />
+                {!isValidDate(bulkDate) && bulkDate.trim() ? <ValidationHint text="Date must be YYYY-MM-DD" /> : null}
                 <Text style={styles.smallText}>Select present students, rest will be absent.</Text>
                 <View style={styles.listWrap}>
                   {bulkStudents.map((student) => {
@@ -815,7 +891,7 @@ function AdminApp({
                 <PrimaryButton
                   title="Save Bulk Attendance"
                   icon="content-save"
-                  disabled={!bulkSubject || !bulkDate.trim()}
+                  disabled={!bulkSubject || !isValidDate(bulkDate)}
                   onPress={async () => {
                     setBusy(true);
                     try {
@@ -881,15 +957,17 @@ function AdminApp({
                   icon="delete"
                   variant="danger"
                   disabled={!selectedAttendanceRecord || !adminPasswordAction.trim()}
-                  onPress={async () => {
-                    try {
-                      await deleteAttendance(token, selectedAttendanceRecord, adminPasswordAction.trim());
-                      setSelectedAttendanceRecord("");
-                      await refreshAll();
-                    } catch (error) {
-                      setMessage(error instanceof Error ? error.message : "Delete failed");
-                    }
-                  }}
+                  onPress={() =>
+                    confirmAction("Delete Attendance", "Delete selected attendance record?", async () => {
+                      try {
+                        await deleteAttendance(token, selectedAttendanceRecord, adminPasswordAction.trim());
+                        setSelectedAttendanceRecord("");
+                        await refreshAll();
+                      } catch (error) {
+                        setMessage(error instanceof Error ? error.message : "Delete failed");
+                      }
+                    })
+                  }
                 />
               </GlassCard>
             </ScrollView>
@@ -900,6 +978,25 @@ function AdminApp({
           <ScrollView contentContainerStyle={styles.screenBody}>
             <GlassCard>
               <Text style={styles.sectionTitle}>Insights: Course → Student → Subjects</Text>
+              <View style={styles.rowWrap}>
+                <Chip
+                  title="Grid"
+                  active={calendarView === "grid"}
+                  onPress={async () => {
+                    setCalendarView("grid");
+                    await AsyncStorage.setItem(CALENDAR_VIEW_KEY, "grid");
+                  }}
+                />
+                <Chip
+                  title="List"
+                  active={calendarView === "list"}
+                  onPress={async () => {
+                    setCalendarView("list");
+                    await AsyncStorage.setItem(CALENDAR_VIEW_KEY, "list");
+                  }}
+                />
+              </View>
+              <TextField label="Month (YYYY-MM)" value={calendarMonth} onChangeText={setCalendarMonth} placeholder="2026-03" />
               {!insights.length ? <Text style={styles.smallText}>No insight data yet.</Text> : null}
               {insights.map((item) => (
                 <GlassCard key={`${item.course_id}-${item.student_id}`} style={styles.innerCard}>
@@ -910,13 +1007,18 @@ function AdminApp({
                   </View>
                   {item.subjects.map((subject) => {
                     const calendar = attendance.filter((a) => a.student_id === item.student_id && a.subject_id === subject.subject_id);
+                    const monthCalendar = calendar.filter((entry) => entry.date.startsWith(calendarMonth));
                     return (
                       <View key={subject.subject_id} style={styles.insightCard}>
                         <Text style={styles.smallText}>{subject.subject_name}</Text>
                         <Text style={styles.percentText}>{subject.percentage.toFixed(1)}%</Text>
-                        <Text style={styles.calendarText}>
-                          Calendar: {calendar.map((e) => `${formatDate(e.date)}-${e.status[0].toUpperCase()}`).join(", ") || "No entries"}
-                        </Text>
+                        {calendarView === "list" ? (
+                          <Text style={styles.calendarText}>
+                            Calendar: {monthCalendar.map((e) => `${formatDate(e.date)}-${e.status[0].toUpperCase()}`).join(", ") || "No entries"}
+                          </Text>
+                        ) : (
+                          <MonthGrid month={calendarMonth} entries={monthCalendar} />
+                        )}
                       </View>
                     );
                   })}
@@ -1044,17 +1146,19 @@ function AdminApp({
                 icon="delete-forever"
                 variant="danger"
                 disabled={!resetAllPassword.trim()}
-                onPress={async () => {
-                  try {
-                    const result = await resetAllData(token, resetAllPassword.trim());
-                    await forceLogout(null);
-                    onGlobalMessage(
-                      `Fresh reset done. Login with ${result.default_admin_phone} / ${result.default_admin_password}`
-                    );
-                  } catch (error) {
-                    setMessage(error instanceof Error ? error.message : "Reset failed");
-                  }
-                }}
+                onPress={() =>
+                  confirmAction("Reset All Data", "This will wipe entire app data. Continue?", async () => {
+                    try {
+                      const result = await resetAllData(token, resetAllPassword.trim());
+                      await forceLogout(null);
+                      onGlobalMessage(
+                        `Fresh reset done. Login with ${result.default_admin_phone} / ${result.default_admin_password}`
+                      );
+                    } catch (error) {
+                      setMessage(error instanceof Error ? error.message : "Reset failed");
+                    }
+                  })
+                }
               />
             </GlassCard>
 
@@ -1135,6 +1239,7 @@ function StudentApp({
   ];
 
   const filteredAttendance = attendance.filter((item) => (subjectFilter ? item.subject_id === subjectFilter : true));
+  const atRiskSubjects = useMemo(() => insights.filter((item) => item.percentage < 75), [insights]);
 
   return (
     <SafeAreaView style={styles.safeRoot}>
@@ -1168,6 +1273,17 @@ function StudentApp({
                 <View key={item.subject_id} style={styles.percentDetailRow}>
                   <Text style={styles.rowTitle}>{item.subject_name}</Text>
                   <Text style={styles.percentText}>{item.percentage.toFixed(1)}%</Text>
+                </View>
+              ))}
+            </GlassCard>
+
+            <GlassCard>
+              <Text style={styles.sectionTitle}>At Risk Subjects (&lt;75%)</Text>
+              {!atRiskSubjects.length ? <Text style={styles.smallText}>Great! No at-risk subjects currently.</Text> : null}
+              {atRiskSubjects.map((item) => (
+                <View key={item.subject_id} style={styles.riskCard}>
+                  <Text style={styles.rowTitle}>{item.subject_name}</Text>
+                  <Text style={styles.riskText}>{item.percentage.toFixed(1)}%</Text>
                 </View>
               ))}
             </GlassCard>
@@ -1379,6 +1495,47 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ValidationHint({ text }: { text: string }) {
+  return (
+    <View style={styles.validationWrap}>
+      <MaterialCommunityIcons name="alert-circle-outline" size={14} color={theme.warning} />
+      <Text style={styles.validationText}>{text}</Text>
+    </View>
+  );
+}
+
+function MonthGrid({ month, entries }: { month: string; entries: AttendanceRecord[] }) {
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return <Text style={styles.calendarText}>Invalid month format</Text>;
+  }
+
+  const [year, mon] = month.split("-").map(Number);
+  const daysInMonth = new Date(year, mon, 0).getDate();
+  const map = new Map(entries.map((entry) => [entry.date, entry.status]));
+
+  return (
+    <View style={styles.calendarGrid}>
+      {Array.from({ length: daysInMonth }).map((_, idx) => {
+        const day = idx + 1;
+        const key = `${month}-${String(day).padStart(2, "0")}`;
+        const status = map.get(key);
+        return (
+          <View
+            key={key}
+            style={[
+              styles.calendarCell,
+              status === "present" ? styles.calendarPresent : null,
+              status === "absent" ? styles.calendarAbsent : null,
+            ]}
+          >
+            <Text style={styles.calendarCellText}>{day}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safeRoot: { flex: 1, backgroundColor: theme.background },
   loaderScreen: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: theme.background },
@@ -1447,7 +1604,7 @@ const styles = StyleSheet.create({
     borderColor: theme.border,
     borderRadius: 14,
     padding: 12,
-    backgroundColor: "rgba(17,34,87,0.55)",
+    backgroundColor: "rgba(79,151,255,0.08)",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -1477,7 +1634,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "rgba(17,34,87,0.45)",
+    backgroundColor: "rgba(79,151,255,0.1)",
   },
   selectRowActive: { borderColor: theme.success, backgroundColor: "rgba(34,197,94,0.16)" },
   insightCard: {
@@ -1485,7 +1642,7 @@ const styles = StyleSheet.create({
     borderColor: theme.border,
     borderRadius: 10,
     padding: 10,
-    backgroundColor: "rgba(17,34,87,0.48)",
+    backgroundColor: "rgba(79,151,255,0.1)",
     gap: 6,
     marginTop: 8,
   },
@@ -1496,7 +1653,7 @@ const styles = StyleSheet.create({
     borderColor: theme.border,
     borderRadius: 12,
     padding: 12,
-    backgroundColor: "rgba(17,34,87,0.58)",
+    backgroundColor: "rgba(79,151,255,0.1)",
     flexDirection: "row",
     gap: 10,
     alignItems: "center",
@@ -1508,7 +1665,7 @@ const styles = StyleSheet.create({
   tabBar: {
     borderTopWidth: 1,
     borderTopColor: theme.border,
-    backgroundColor: "rgba(6,17,46,0.96)",
+    backgroundColor: "rgba(226,240,255,0.96)",
     flexDirection: "row",
     paddingHorizontal: 6,
     paddingTop: 8,
@@ -1543,6 +1700,64 @@ const styles = StyleSheet.create({
     borderRadius: 55,
     backgroundColor: "#fff",
     alignSelf: "center",
+  },
+  riskCard: {
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 12,
+    padding: 10,
+    backgroundColor: "rgba(236,247,255,0.8)",
+    gap: 6,
+  },
+  riskText: {
+    color: theme.danger,
+    fontWeight: "800",
+    fontSize: 13,
+  },
+  validationWrap: {
+    borderRadius: 999,
+    backgroundColor: "rgba(242,169,59,0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(242,169,59,0.45)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  validationText: {
+    color: theme.warning,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  calendarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 6,
+  },
+  calendarCell: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: theme.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(223,238,255,0.8)",
+  },
+  calendarPresent: {
+    backgroundColor: "rgba(30,166,114,0.2)",
+    borderColor: theme.success,
+  },
+  calendarAbsent: {
+    backgroundColor: "rgba(229,84,84,0.2)",
+    borderColor: theme.danger,
+  },
+  calendarCellText: {
+    color: theme.text,
+    fontSize: 11,
+    fontWeight: "700",
   },
 });
 
