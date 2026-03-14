@@ -523,8 +523,9 @@ async def get_subjects(course_id: Optional[str] = Query(default=None), _: Dict =
         query,
         {"_id": 0, "subject_id": 1, "course_id": 1, "name": 1, "code": 1, "created_at": 1},
     ).to_list(2000)
-    subjects.sort(key=lambda item: (item["course_id"], item["name"]))
-    return subjects
+    valid_subjects = [item for item in subjects if item.get("course_id") and item.get("subject_id")]
+    valid_subjects.sort(key=lambda item: (item.get("course_id", ""), item.get("name", "")))
+    return valid_subjects
 
 
 @api_router.delete("/admin/subjects/{subject_id}")

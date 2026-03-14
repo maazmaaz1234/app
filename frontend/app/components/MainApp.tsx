@@ -696,6 +696,7 @@ function AdminApp({
                   value={adminPasswordAction}
                   onChangeText={setAdminPasswordAction}
                   placeholder="Admin password"
+                  testID="admin-password-action"
                   secureTextEntry
                 />
 
@@ -792,11 +793,15 @@ function AdminApp({
                   {bulkStudents.map((student) => {
                     const active = presentStudentIds.includes(student.user_id);
                     return (
-                      <Pressable key={student.user_id} style={[styles.selectRow, active && styles.selectRowActive]} onPress={() => {
+                      <Pressable
+                        testID={`bulk-select-${student.user_id}`}
+                        key={student.user_id}
+                        style={[styles.selectRow, active && styles.selectRowActive]}
+                        onPress={() => {
                         setPresentStudentIds((prev) =>
                           prev.includes(student.user_id) ? prev.filter((id) => id !== student.user_id) : [...prev, student.user_id]
                         );
-                      }}>
+                        }}>
                         <Text style={styles.rowTitle}>{student.name}</Text>
                         <MaterialCommunityIcons
                           name={active ? "check-circle" : "circle-outline"}
@@ -1346,8 +1351,9 @@ function BottomTabs({
 }
 
 function Chip({ title, active, onPress }: { title: string; active: boolean; onPress: () => void }) {
+  const chipId = `chip-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
-    <Pressable style={[styles.chip, active && styles.chipActive]} onPress={onPress}>
+    <Pressable testID={chipId} style={[styles.chip, active && styles.chipActive]} onPress={onPress}>
       <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
         {title}
       </Text>
@@ -1356,8 +1362,9 @@ function Chip({ title, active, onPress }: { title: string; active: boolean; onPr
 }
 
 function RoleChip({ title, active, onPress }: { title: string; active: boolean; onPress: () => void }) {
+  const roleId = `role-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
-    <Pressable style={[styles.roleChip, active && styles.roleChipActive]} onPress={onPress}>
+    <Pressable testID={roleId} style={[styles.roleChip, active && styles.roleChipActive]} onPress={onPress}>
       <Text style={[styles.roleChipText, active && styles.roleChipTextActive]}>{title}</Text>
     </Pressable>
   );
