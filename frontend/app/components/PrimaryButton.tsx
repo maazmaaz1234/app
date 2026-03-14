@@ -25,6 +25,7 @@ export function PrimaryButton({
   variant = "primary",
 }: PrimaryButtonProps) {
   const scale = useSharedValue(1);
+  const generatedTestId = testID || `btn-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
@@ -36,7 +37,7 @@ export function PrimaryButton({
   return (
     <Animated.View style={animatedStyle}>
       <Pressable
-        testID={testID}
+        testID={generatedTestId}
         onPress={onPress}
         disabled={isDisabled}
         onPressIn={() => {
@@ -63,11 +64,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 16,
-    shadowColor: theme.primary,
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
   },
   content: {
     flexDirection: "row",
@@ -83,3 +79,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
 });
+
+export default function PrimaryButtonRoute() {
+  return null;
+}

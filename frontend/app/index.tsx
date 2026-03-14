@@ -1,123 +1,124 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import * as Linking from "expo-linking";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  ImageBackground,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { LineChart, PieChart } from "react-native-chart-kit";
-import * as Linking from "expo-linking";
 
 import { GlassCard } from "./components/GlassCard";
 import { LoaderSkeleton } from "./components/LoaderSkeleton";
 import { PrimaryButton } from "./components/PrimaryButton";
 import { TextField } from "./components/TextField";
-import {
-  AUTH_BACKGROUND_IMAGE,
-  DASHBOARD_HERO_IMAGE,
-  DEVELOPER_BACKGROUND_IMAGE,
-} from "./constants/embeddedImages";
+import { COLLEGE_LOGO_IMAGE } from "./constants/embeddedImages";
 import { theme } from "./constants/theme";
 import {
   approveStudent,
-  createCourse,
+  assignSubjects,
+  createAdmin,
   createSemester,
-  deleteAttendance,
-  getAdminAnalytics,
-  getAdminAttendance,
+  createSubject,
+  forgotPasswordAdmin,
+  getAdminInsights,
   getApprovedStudents,
-  getCourses,
+  getCollegeProfile,
   getMe,
   getPendingStudents,
   getSemesters,
-  getStudentAnalytics,
   getStudentAttendance,
-  getStudentCourses,
+  getStudentInsights,
+  getStudentSubjects,
+  getSubjectStudents,
+  getSubjects,
+  importCsv,
   login,
-  markAttendance,
+  markBulkAttendance,
   signUp,
-  updateAttendance,
+  updateCollegeProfile,
 } from "./services/api";
-import { AnalyticsResponse, AttendanceRecord, Course, PendingStudent, Semester, User } from "./types";
+import { AttendanceRecord, CollegeProfile, Semester, StudentInsightGroup, Subject, SubjectInsight, User } from "./types";
 
-type Session = {
-  token: string;
-  user: User;
-};
-
-type AdminTab = "dashboard" | "manage" | "insights" | "settings" | "developer";
-type StudentTab = "dashboard" | "attendance" | "insights" | "settings" | "developer";
+type Session = { token: string; user: User };
+type AuthMode = "login" | "signup";
+type AdminTab = "home" | "manage" | "insights" | "settings" | "developer";
+type StudentTab = "home" | "history" | "insights" | "settings" | "developer";
 
 const SESSION_KEY = "svam_session";
 
-const defaultAnalytics: AnalyticsResponse = {
-  overall_present: 0,
-  overall_total: 0,
-  overall_percentage: 0,
-  courses: [],
-};
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-const formatDate = (dateString: string) => {
-  const date = new Date(dateString);
-  return Number.isNaN(date.getTime()) ? dateString : date.toLocaleDateString();
-};
-
-const today = () => new Date().toISOString().slice(0, 10);
+function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
 
 export default function Index() {
   const [session, setSession] = useState<Session | null>(null);
-  const [isBootLoading, setIsBootLoading] = useState(true);
+  const [bootLoading, setBootLoading] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
-  const [approvalCheckBusy, setApprovalCheckBusy] = useState(false);
+  const [profile, setProfile] = useState<CollegeProfile | null>(null);
+
+  const loadProfile = useCallback(async () => {
+    try {
+      const profileData = await getCollegeProfile();
+      setProfile(profileData);
+    } catch {
+      setProfile({
+        college_id: "shree-vedha",
+        college_name: "Shree Vedha College",
+        logo_base64: "",
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }, []);
 
   useEffect(() => {
-    const restore = async () => {
-      try {
-        const cached = await AsyncStorage.getItem(SESSION_KEY);
-        if (!cached) {
-          return;
+    const init = async () => {
+      await loadProfile();
+      const stored = await AsyncStorage.getItem(SESSION_KEY);
+      if (stored) {
+        try {
+          setSession(JSON.parse(stored) as Session);
+        } catch {
+          await AsyncStorage.removeItem(SESSION_KEY);
         }
-        const parsed = JSON.parse(cached) as Session;
-        setSession(parsed);
-      } catch {
-        await AsyncStorage.removeItem(SESSION_KEY);
-      } finally {
-        setIsBootLoading(false);
       }
+      setBootLoading(false);
     };
-
-    restore();
-  }, []);
+    init();
+  }, [loadProfile]);
 
   const persistSession = useCallback(async (nextSession: Session | null) => {
     setSession(nextSession);
     if (nextSession) {
       await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
-      return;
+    } else {
+      await AsyncStorage.removeItem(SESSION_KEY);
     }
-    await AsyncStorage.removeItem(SESSION_KEY);
   }, []);
 
   const handleLogin = useCallback(
-    async (payload: { email: string; password: string }) => {
+    async (phone_number: string, password: string) => {
       setAuthBusy(true);
       setAuthMessage("");
       try {
-        const response = await login(payload);
-        await persistSession({ token: response.access_token, user: response.user });
-        setAuthMessage(response.message);
+        const result = await login({ phone_number, password });
+        await persistSession({ token: result.access_token, user: result.user });
+        setAuthMessage(result.message);
       } catch (error) {
-        setAuthMessage(error instanceof Error ? error.message : "Unable to login");
+        setAuthMessage(error instanceof Error ? error.message : "Login failed");
       } finally {
         setAuthBusy(false);
       }
@@ -126,21 +127,15 @@ export default function Index() {
   );
 
   const handleSignup = useCallback(
-    async (payload: {
-      name: string;
-      email: string;
-      password: string;
-      role: "college" | "student";
-      college_name: string;
-    }) => {
+    async (payload: { name: string; phone_number: string; password: string; role: "admin" | "student" }) => {
       setAuthBusy(true);
       setAuthMessage("");
       try {
-        const response = await signUp(payload);
-        await persistSession({ token: response.access_token, user: response.user });
-        setAuthMessage(response.message);
+        const result = await signUp(payload);
+        await persistSession({ token: result.access_token, user: result.user });
+        setAuthMessage(result.message);
       } catch (error) {
-        setAuthMessage(error instanceof Error ? error.message : "Unable to sign up");
+        setAuthMessage(error instanceof Error ? error.message : "Signup failed");
       } finally {
         setAuthBusy(false);
       }
@@ -148,31 +143,36 @@ export default function Index() {
     [persistSession]
   );
 
+  const handleResetAdminPassword = useCallback(async (phone_number: string, new_password: string) => {
+    setAuthBusy(true);
+    setAuthMessage("");
+    try {
+      const result = await forgotPasswordAdmin({ phone_number, new_password });
+      setAuthMessage(result.message);
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : "Password reset failed");
+    } finally {
+      setAuthBusy(false);
+    }
+  }, []);
+
   const handleLogout = useCallback(async () => {
     await persistSession(null);
   }, [persistSession]);
 
-  const refreshApprovalState = useCallback(async () => {
-    if (!session) {
-      return;
-    }
-
-    setApprovalCheckBusy(true);
+  const refreshUser = useCallback(async () => {
+    if (!session) return;
     try {
-      const latestUser = await getMe(session.token);
-      const nextSession = { ...session, user: latestUser };
-      await persistSession(nextSession);
-      setAuthMessage(latestUser.approved ? "Approved! Welcome in 🎉" : "Still pending approval");
-    } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : "Unable to refresh status");
-    } finally {
-      setApprovalCheckBusy(false);
+      const user = await getMe(session.token);
+      await persistSession({ ...session, user });
+    } catch {
+      await handleLogout();
     }
-  }, [persistSession, session]);
+  }, [handleLogout, persistSession, session]);
 
-  if (isBootLoading) {
+  if (bootLoading) {
     return (
-      <SafeAreaView style={styles.bootLoader}>
+      <SafeAreaView style={styles.loaderScreen}>
         <ActivityIndicator size="large" color={theme.primary} />
       </SafeAreaView>
     );
@@ -185,936 +185,861 @@ export default function Index() {
         message={authMessage}
         onLogin={handleLogin}
         onSignup={handleSignup}
+        onResetAdminPassword={handleResetAdminPassword}
       />
     );
   }
 
   if (session.user.role === "student" && !session.user.approved) {
+    return <PendingApproval onLogout={handleLogout} onRefresh={refreshUser} />;
+  }
+
+  if (session.user.role === "admin") {
     return (
-      <PendingApprovalScreen
+      <AdminApp
+        token={session.token}
         user={session.user}
-        checking={approvalCheckBusy}
-        message={authMessage}
-        onCheckApproval={refreshApprovalState}
+        profile={profile}
         onLogout={handleLogout}
+        onProfileUpdated={setProfile}
       />
     );
   }
 
-  if (session.user.role === "college") {
-    return <AdminShell user={session.user} token={session.token} onLogout={handleLogout} />;
-  }
-
-  return <StudentShell user={session.user} token={session.token} onLogout={handleLogout} />;
+  return <StudentApp token={session.token} user={session.user} profile={profile} onLogout={handleLogout} />;
 }
 
 function AuthScreen({
-  onLogin,
-  onSignup,
   busy,
   message,
+  onLogin,
+  onSignup,
+  onResetAdminPassword,
 }: {
-  onLogin: (payload: { email: string; password: string }) => Promise<void>;
-  onSignup: (payload: {
-    name: string;
-    email: string;
-    password: string;
-    role: "college" | "student";
-    college_name: string;
-  }) => Promise<void>;
   busy: boolean;
   message: string;
+  onLogin: (phone_number: string, password: string) => Promise<void>;
+  onSignup: (payload: { name: string; phone_number: string; password: string; role: "admin" | "student" }) => Promise<void>;
+  onResetAdminPassword: (phone_number: string, new_password: string) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<"login" | "signup">("login");
-  const [role, setRole] = useState<"college" | "student">("college");
+  const [mode, setMode] = useState<AuthMode>("login");
+  const [role, setRole] = useState<"admin" | "student">("student");
   const [name, setName] = useState("");
-  const [collegeName, setCollegeName] = useState("");
-  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotPhone, setForgotPhone] = useState("");
+  const [forgotPassword, setForgotPassword] = useState("");
 
-  const submitDisabled = useMemo(() => {
-    if (!email.trim() || !password.trim()) {
-      return true;
-    }
+  const disableSubmit = useMemo(() => {
     if (mode === "signup") {
-      return !name.trim() || !collegeName.trim();
+      return !name.trim() || !phone.trim() || !password.trim();
     }
-    return false;
-  }, [collegeName, email, mode, name, password]);
+    return !phone.trim() || !password.trim();
+  }, [mode, name, password, phone]);
 
   return (
-    <ImageBackground source={{ uri: AUTH_BACKGROUND_IMAGE }} style={styles.flex} resizeMode="cover">
-      <SafeAreaView style={styles.flex}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.flex}>
-          <ScrollView contentContainerStyle={styles.authScroll} keyboardShouldPersistTaps="handled">
-            <Text style={styles.authTitle}>Shree vedha attendance management</Text>
-            <Text style={styles.authSubtitle}>Premium dark attendance app for college & students</Text>
+    <SafeAreaView style={styles.safeRoot}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.flex1}>
+        <ScrollView contentContainerStyle={styles.authContainer} keyboardShouldPersistTaps="handled">
+          <Image source={{ uri: COLLEGE_LOGO_IMAGE }} style={styles.authLogo} />
+          <Text style={styles.authTitle}>Shree Vedha College Attendance Management</Text>
 
-            <GlassCard style={styles.authCard}>
-              <View style={styles.modeRow}>
-                <Pressable
-                  testID="mode-login"
-                  onPress={() => setMode("login")}
-                  style={[styles.modeButton, mode === "login" && styles.modeButtonActive]}
-                >
-                  <Text style={[styles.modeText, mode === "login" && styles.modeTextActive]}>Login</Text>
-                </Pressable>
-                <Pressable
-                  testID="mode-signup"
-                  onPress={() => setMode("signup")}
-                  style={[styles.modeButton, mode === "signup" && styles.modeButtonActive]}
-                >
-                  <Text style={[styles.modeText, mode === "signup" && styles.modeTextActive]}>Sign Up</Text>
-                </Pressable>
-              </View>
+          <GlassCard style={styles.authCard}>
+            <View style={styles.modeRow}>
+              <Pressable testID="auth-login-mode" onPress={() => setMode("login")} style={[styles.modeBtn, mode === "login" && styles.modeBtnActive]}>
+                <Text style={[styles.modeText, mode === "login" && styles.modeTextActive]}>Login</Text>
+              </Pressable>
+              <Pressable testID="auth-signup-mode" onPress={() => setMode("signup")} style={[styles.modeBtn, mode === "signup" && styles.modeBtnActive]}>
+                <Text style={[styles.modeText, mode === "signup" && styles.modeTextActive]}>Sign Up</Text>
+              </Pressable>
+            </View>
 
-              {mode === "signup" ? (
-                <>
-                  <TextField label="Full name" value={name} onChangeText={setName} placeholder="Enter your full name" />
-                  <TextField
-                    label="College name"
-                    value={collegeName}
-                    onChangeText={setCollegeName}
-                    placeholder="Example: Shree Vedha College"
-                  />
+            {mode === "signup" ? (
+              <>
+                <TextField label="Full Name" value={name} onChangeText={setName} placeholder="Enter full name" />
+                <View style={styles.rowWrap}>
+                  <RoleChip title="Student" active={role === "student"} onPress={() => setRole("student")} />
+                  <RoleChip title="Admin" active={role === "admin"} onPress={() => setRole("admin")} />
+                </View>
+              </>
+            ) : null}
 
-                  <View style={styles.roleSelector}>
-                    <Text style={styles.fieldTitle}>Role</Text>
-                    <View style={styles.roleButtonsWrap}>
-                      <RoleChip active={role === "college"} title="College Admin" onPress={() => setRole("college")} />
-                      <RoleChip active={role === "student"} title="Student" onPress={() => setRole("student")} />
-                    </View>
-                  </View>
-                </>
-              ) : null}
+            <TextField
+              label="Phone Number"
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="+91XXXXXXXXXX"
+              keyboardType="phone-pad"
+            />
+            <TextField label="Password" value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry />
 
-              <TextField
-                label="Email"
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@example.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-              <TextField
-                label="Password"
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Minimum 6 characters"
-                secureTextEntry
-              />
+            {mode === "login" ? (
+              <Pressable testID="forgot-password-toggle" onPress={() => setShowForgot((prev) => !prev)}>
+                <Text style={styles.linkText}>Forgot admin password?</Text>
+              </Pressable>
+            ) : null}
 
-              {message ? <Text style={styles.messageText}>{message}</Text> : null}
+            {showForgot ? (
+              <GlassCard style={styles.forgotCard}>
+                <TextField
+                  label="Admin Phone"
+                  value={forgotPhone}
+                  onChangeText={setForgotPhone}
+                  placeholder="+91XXXXXXXXXX"
+                  keyboardType="phone-pad"
+                />
+                <TextField
+                  label="New Password"
+                  value={forgotPassword}
+                  onChangeText={setForgotPassword}
+                  placeholder="New password"
+                  secureTextEntry
+                />
+                <PrimaryButton
+                  title="Reset Admin Password"
+                  icon="key-change"
+                  disabled={!forgotPhone.trim() || !forgotPassword.trim()}
+                  loading={busy}
+                  onPress={() => onResetAdminPassword(forgotPhone.trim(), forgotPassword.trim())}
+                />
+              </GlassCard>
+            ) : null}
 
-              <PrimaryButton
-                testID="auth-submit"
-                title={mode === "login" ? "Login" : "Create account"}
-                icon="login"
-                loading={busy}
-                disabled={submitDisabled}
-                onPress={() => {
-                  if (mode === "login") {
-                    onLogin({ email: email.trim(), password: password.trim() });
-                    return;
-                  }
+            {message ? <Text style={styles.messageText}>{message}</Text> : null}
+
+            <PrimaryButton
+              testID="auth-submit"
+              title={mode === "login" ? "Login" : "Create Account"}
+              icon="login"
+              disabled={disableSubmit}
+              loading={busy}
+              onPress={() => {
+                if (mode === "login") {
+                  onLogin(phone.trim(), password.trim());
+                } else {
                   onSignup({
                     name: name.trim(),
-                    email: email.trim(),
+                    phone_number: phone.trim(),
                     password: password.trim(),
                     role,
-                    college_name: collegeName.trim(),
                   });
-                }}
-              />
-            </GlassCard>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </ImageBackground>
+                }
+              }}
+            />
+          </GlassCard>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
-function PendingApprovalScreen({
-  user,
-  checking,
-  message,
-  onCheckApproval,
-  onLogout,
-}: {
-  user: User;
-  checking: boolean;
-  message: string;
-  onCheckApproval: () => Promise<void>;
-  onLogout: () => Promise<void>;
-}) {
+function PendingApproval({ onLogout, onRefresh }: { onLogout: () => Promise<void>; onRefresh: () => Promise<void> }) {
   return (
-    <SafeAreaView style={styles.mainSafe}>
-      <View style={styles.pendingWrap}>
+    <SafeAreaView style={styles.safeRoot}>
+      <View style={styles.centerWrap}>
         <GlassCard style={styles.pendingCard}>
-          <MaterialCommunityIcons name="clock-alert" size={40} color={theme.warning} />
-          <Text style={styles.pendingTitle}>Approval Pending</Text>
-          <Text style={styles.pendingText}>
-            Hi {user.name}, your college admin needs to approve your account to unlock attendance data.
-          </Text>
-          <Text style={styles.pendingText}>College: {user.college_name}</Text>
-
-          {message ? <Text style={styles.messageText}>{message}</Text> : null}
-
-          <View style={styles.pendingActions}>
-            <PrimaryButton
-              testID="check-approval"
-              title="Check Approval"
-              icon="refresh"
-              loading={checking}
-              onPress={onCheckApproval}
-            />
-            <PrimaryButton
-              title="Logout"
-              icon="logout"
-              variant="secondary"
-              onPress={() => {
-                onLogout();
-              }}
-            />
-          </View>
+          <Image source={{ uri: COLLEGE_LOGO_IMAGE }} style={styles.pendingLogo} />
+          <Text style={styles.sectionTitle}>Approval Pending</Text>
+          <Text style={styles.smallText}>Your student account will unlock after admin approval.</Text>
+          <PrimaryButton title="Check Approval" icon="refresh" onPress={onRefresh} />
+          <PrimaryButton title="Logout" icon="logout" variant="secondary" onPress={() => onLogout()} />
         </GlassCard>
       </View>
     </SafeAreaView>
   );
 }
 
-function AdminShell({ user, token, onLogout }: { user: User; token: string; onLogout: () => Promise<void> }) {
-  const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
+function AdminApp({
+  token,
+  user,
+  profile,
+  onLogout,
+  onProfileUpdated,
+}: {
+  token: string;
+  user: User;
+  profile: CollegeProfile | null;
+  onLogout: () => Promise<void>;
+  onProfileUpdated: (profile: CollegeProfile) => void;
+}) {
+  const [tab, setTab] = useState<AdminTab>("home");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
-  const [pendingStudents, setPendingStudents] = useState<PendingStudent[]>([]);
   const [students, setStudents] = useState<User[]>([]);
+  const [pendingStudents, setPendingStudents] = useState<User[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
-  const [analytics, setAnalytics] = useState<AnalyticsResponse>(defaultAnalytics);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [insights, setInsights] = useState<StudentInsightGroup[]>([]);
 
   const [semesterName, setSemesterName] = useState("");
-  const [selectedSemester, setSelectedSemester] = useState("");
-  const [courseName, setCourseName] = useState("");
-  const [courseCode, setCourseCode] = useState("");
-  const [selectedCourse, setSelectedCourse] = useState("");
+  const [subjectName, setSubjectName] = useState("");
+  const [subjectCode, setSubjectCode] = useState("");
+  const [subjectSemester, setSubjectSemester] = useState("");
   const [selectedStudent, setSelectedStudent] = useState("");
-  const [attendanceDate, setAttendanceDate] = useState(today());
-  const [attendanceStatus, setAttendanceStatus] = useState<"present" | "absent">("present");
+  const [selectedAssignSubjects, setSelectedAssignSubjects] = useState<string[]>([]);
 
-  const cacheKey = `svam_admin_cache_${user.user_id}`;
-  const { width } = useWindowDimensions();
-  const chartWidth = Math.max(width - 76, 270);
+  const [bulkSubject, setBulkSubject] = useState("");
+  const [bulkDate, setBulkDate] = useState(today());
+  const [bulkStudents, setBulkStudents] = useState<User[]>([]);
+  const [presentStudents, setPresentStudents] = useState<string[]>([]);
 
-  const loadAll = useCallback(async () => {
+  const [csvText, setCsvText] = useState("");
+  const [collegeName, setCollegeName] = useState(profile?.college_name || "Shree Vedha College");
+  const [adminName, setAdminName] = useState("");
+  const [adminPhone, setAdminPhone] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+
+  const refreshAll = useCallback(async () => {
     setBusy(true);
     try {
-      const [pending, approved, semestersData, coursesData, attendanceData, analyticsData] = await Promise.all([
+      const [pending, approved, sems, subjs, insightResp, profileResp] = await Promise.all([
         getPendingStudents(token),
         getApprovedStudents(token),
         getSemesters(token),
-        getCourses(token),
-        getAdminAttendance(token),
-        getAdminAnalytics(token),
+        getSubjects(token),
+        getAdminInsights(token),
+        getCollegeProfile(),
       ]);
-
       setPendingStudents(pending);
       setStudents(approved);
-      setSemesters(semestersData);
-      setCourses(coursesData);
-      setAttendance(attendanceData);
-      setAnalytics(analyticsData);
-
-      await AsyncStorage.setItem(
-        cacheKey,
-        JSON.stringify({
-          pending,
-          approved,
-          semestersData,
-          coursesData,
-          attendanceData,
-          analyticsData,
-        })
-      );
-
+      setSemesters(sems);
+      setSubjects(subjs);
+      setInsights(insightResp.insights);
+      setCollegeName(profileResp.college_name);
+      onProfileUpdated(profileResp);
+      if (!subjectSemester && sems[0]?.semester_id) setSubjectSemester(sems[0].semester_id);
+      if (!selectedStudent && approved[0]?.user_id) setSelectedStudent(approved[0].user_id);
+      if (!bulkSubject && subjs[0]?.subject_id) setBulkSubject(subjs[0].subject_id);
       setMessage("");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to load admin data");
     } finally {
       setBusy(false);
     }
-  }, [cacheKey, token]);
+  }, [bulkSubject, onProfileUpdated, selectedStudent, subjectSemester, token]);
 
   useEffect(() => {
-    const init = async () => {
-      const cached = await AsyncStorage.getItem(cacheKey);
-      if (!cached) {
-        loadAll();
+    refreshAll();
+  }, [refreshAll]);
+
+  useEffect(() => {
+    const loadSubjectStudents = async () => {
+      if (!bulkSubject) {
+        setBulkStudents([]);
+        setPresentStudents([]);
         return;
       }
       try {
-        const parsed = JSON.parse(cached) as {
-          pending: PendingStudent[];
-          approved: User[];
-          semestersData: Semester[];
-          coursesData: Course[];
-          attendanceData: AttendanceRecord[];
-          analyticsData: AnalyticsResponse;
-        };
-        setPendingStudents(parsed.pending);
-        setStudents(parsed.approved);
-        setSemesters(parsed.semestersData);
-        setCourses(parsed.coursesData);
-        setAttendance(parsed.attendanceData);
-        setAnalytics(parsed.analyticsData);
+        const result = await getSubjectStudents(token, bulkSubject);
+        setBulkStudents(result);
+        setPresentStudents([]);
       } catch {
-        await AsyncStorage.removeItem(cacheKey);
+        setBulkStudents([]);
       }
-      loadAll();
     };
+    loadSubjectStudents();
+  }, [bulkSubject, token]);
 
-    init();
-  }, [cacheKey, loadAll]);
+  const togglePresent = (studentId: string) => {
+    setPresentStudents((previous) =>
+      previous.includes(studentId) ? previous.filter((item) => item !== studentId) : [...previous, studentId]
+    );
+  };
 
-  useEffect(() => {
-    if (!selectedSemester && semesters[0]?.semester_id) {
-      setSelectedSemester(semesters[0].semester_id);
-    }
-  }, [selectedSemester, semesters]);
-
-  useEffect(() => {
-    if (!selectedCourse && courses[0]?.course_id) {
-      setSelectedCourse(courses[0].course_id);
-    }
-  }, [courses, selectedCourse]);
-
-  useEffect(() => {
-    if (!selectedStudent && students[0]?.user_id) {
-      setSelectedStudent(students[0].user_id);
-    }
-  }, [selectedStudent, students]);
-
-  const adminTabs: Array<{ key: AdminTab; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
-    { key: "dashboard", label: "Home", icon: "home-outline" },
+  const logoUri = profile?.logo_base64 ? profile.logo_base64 : COLLEGE_LOGO_IMAGE;
+  const tabs: { key: AdminTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+    { key: "home", label: "Home", icon: "home-outline" },
     { key: "manage", label: "Manage", icon: "create-outline" },
-    { key: "insights", label: "Insights", icon: "stats-chart-outline" },
-    { key: "settings", label: "Settings", icon: "settings-outline" },
-    { key: "developer", label: "Developer", icon: "code-slash-outline" },
-  ];
-
-  const markNewAttendance = async () => {
-    if (!selectedCourse || !selectedStudent || !attendanceDate.trim()) {
-      setMessage("Pick course, student and date first");
-      return;
-    }
-    setBusy(true);
-    try {
-      await markAttendance(token, {
-        course_id: selectedCourse,
-        student_id: selectedStudent,
-        date: attendanceDate,
-        status: attendanceStatus,
-      });
-      setMessage("Attendance saved");
-      await loadAll();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to mark attendance");
-      setBusy(false);
-    }
-  };
-
-  const addSemester = async () => {
-    if (!semesterName.trim()) {
-      setMessage("Enter semester name");
-      return;
-    }
-    setBusy(true);
-    try {
-      await createSemester(token, semesterName.trim());
-      setSemesterName("");
-      setMessage("Semester created");
-      await loadAll();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to create semester");
-      setBusy(false);
-    }
-  };
-
-  const addCourse = async () => {
-    if (!selectedSemester || !courseName.trim() || !courseCode.trim()) {
-      setMessage("Select semester, then add course name and code");
-      return;
-    }
-    setBusy(true);
-    try {
-      await createCourse(token, {
-        semester_id: selectedSemester,
-        name: courseName.trim(),
-        code: courseCode.trim(),
-      });
-      setCourseName("");
-      setCourseCode("");
-      setMessage("Course created");
-      await loadAll();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to create course");
-      setBusy(false);
-    }
-  };
-
-  const approve = async (studentId: string) => {
-    setBusy(true);
-    try {
-      await approveStudent(token, studentId);
-      setMessage("Student approved");
-      await loadAll();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to approve student");
-      setBusy(false);
-    }
-  };
-
-  const toggleAttendance = async (item: AttendanceRecord) => {
-    setBusy(true);
-    try {
-      const nextStatus = item.status === "present" ? "absent" : "present";
-      await updateAttendance(token, item.record_id, nextStatus);
-      setMessage("Attendance updated");
-      await loadAll();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to update attendance");
-      setBusy(false);
-    }
-  };
-
-  const removeAttendance = async (recordId: string) => {
-    setBusy(true);
-    try {
-      await deleteAttendance(token, recordId);
-      setMessage("Record deleted");
-      await loadAll();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to delete attendance");
-      setBusy(false);
-    }
-  };
-
-  const filteredHistory = attendance.filter((item) => {
-    if (selectedCourse && item.course_id !== selectedCourse) return false;
-    if (selectedStudent && item.student_id !== selectedStudent) return false;
-    return true;
-  });
-
-  const dashboardBody = (
-    <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
-      <ImageBackground source={{ uri: DASHBOARD_HERO_IMAGE }} style={styles.heroCard} imageStyle={styles.heroImage}>
-        <Text style={styles.heroTitle}>College Admin Hub</Text>
-        <Text style={styles.heroSubtitle}>Track attendance, approve students, and monitor quality.</Text>
-      </ImageBackground>
-
-      <View style={styles.statsGrid}>
-        <StatCard title="Pending approvals" value={pendingStudents.length.toString()} accent={theme.warning} />
-        <StatCard title="Courses" value={courses.length.toString()} accent={theme.primary} />
-        <StatCard title="Overall attendance" value={`${analytics.overall_percentage.toFixed(1)}%`} accent={theme.success} />
-      </View>
-
-      <GlassCard>
-        <View style={styles.sectionHeadRow}>
-          <Text style={styles.sectionTitle}>Pending Student Approvals</Text>
-          <PrimaryButton title="Refresh" icon="refresh" variant="secondary" onPress={loadAll} disabled={busy} />
-        </View>
-
-        {busy && pendingStudents.length === 0 ? <LoaderSkeleton /> : null}
-
-        {!pendingStudents.length && !busy ? <Text style={styles.emptyText}>No pending approvals right now.</Text> : null}
-
-        <View style={styles.listWrap}>
-          {pendingStudents.map((student, index) => (
-            <GlassCard delay={index * 30} style={styles.rowCard} key={student.user_id}>
-              <View style={styles.rowHeader}>
-                <View>
-                  <Text style={styles.rowTitle}>{student.name}</Text>
-                  <Text style={styles.rowMeta}>{student.email}</Text>
-                </View>
-                <PrimaryButton title="Approve" icon="check" onPress={() => approve(student.user_id)} disabled={busy} />
-              </View>
-            </GlassCard>
-          ))}
-        </View>
-      </GlassCard>
-    </ScrollView>
-  );
-
-  const manageBody = (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.scrollBody} keyboardShouldPersistTaps="handled">
-        <GlassCard>
-          <Text style={styles.sectionTitle}>Create Semester</Text>
-          <TextField label="Semester name" value={semesterName} onChangeText={setSemesterName} placeholder="Example: Semester 1" />
-          <PrimaryButton title="Add Semester" icon="plus" onPress={addSemester} disabled={busy} testID="add-semester-btn" />
-        </GlassCard>
-
-        <GlassCard>
-          <Text style={styles.sectionTitle}>Create Course</Text>
-          <Text style={styles.sectionNote}>Select semester</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-            {semesters.map((semester) => (
-              <Chip
-                key={semester.semester_id}
-                active={selectedSemester === semester.semester_id}
-                title={semester.name}
-                onPress={() => setSelectedSemester(semester.semester_id)}
-              />
-            ))}
-          </ScrollView>
-          <TextField label="Course name" value={courseName} onChangeText={setCourseName} placeholder="Engineering Maths" />
-          <TextField label="Course code" value={courseCode} onChangeText={setCourseCode} placeholder="MATH101" />
-          <PrimaryButton title="Add Course" icon="book-plus" onPress={addCourse} disabled={busy} testID="add-course-btn" />
-        </GlassCard>
-
-        <GlassCard>
-          <Text style={styles.sectionTitle}>Mark Attendance</Text>
-
-          <Text style={styles.sectionNote}>Choose course</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-            {courses.map((course) => (
-              <Chip
-                key={course.course_id}
-                active={selectedCourse === course.course_id}
-                title={course.code}
-                onPress={() => setSelectedCourse(course.course_id)}
-              />
-            ))}
-          </ScrollView>
-
-          <Text style={styles.sectionNote}>Choose student</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-            {students.map((student) => (
-              <Chip
-                key={student.user_id}
-                active={selectedStudent === student.user_id}
-                title={student.name}
-                onPress={() => setSelectedStudent(student.user_id)}
-              />
-            ))}
-          </ScrollView>
-
-          <TextField label="Date (YYYY-MM-DD)" value={attendanceDate} onChangeText={setAttendanceDate} placeholder="2026-03-14" />
-
-          <View style={styles.rowGap}>
-            <Text style={styles.sectionNote}>Status</Text>
-            <View style={styles.roleButtonsWrap}>
-              <RoleChip
-                active={attendanceStatus === "present"}
-                title="Present"
-                onPress={() => setAttendanceStatus("present")}
-              />
-              <RoleChip
-                active={attendanceStatus === "absent"}
-                title="Absent"
-                onPress={() => setAttendanceStatus("absent")}
-              />
-            </View>
-          </View>
-
-          <PrimaryButton title="Save Attendance" icon="check-circle" onPress={markNewAttendance} disabled={busy} />
-        </GlassCard>
-
-        <GlassCard>
-          <Text style={styles.sectionTitle}>Editable Attendance History</Text>
-          {!filteredHistory.length ? <Text style={styles.emptyText}>No records match selected filters.</Text> : null}
-          <View style={styles.listWrap}>
-            {filteredHistory.slice(0, 40).map((item) => (
-              <View key={item.record_id} style={styles.historyCard}>
-                <View style={styles.historyHeader}>
-                  <Text style={styles.rowTitle}>{item.course_name}</Text>
-                  <Text style={[styles.statusPill, item.status === "present" ? styles.presentPill : styles.absentPill]}>
-                    {item.status.toUpperCase()}
-                  </Text>
-                </View>
-                <Text style={styles.rowMeta}>
-                  {item.student_name} • {formatDate(item.date)}
-                </Text>
-                <View style={styles.historyActions}>
-                  <PrimaryButton
-                    title="Toggle"
-                    variant="secondary"
-                    icon="swap-horizontal"
-                    onPress={() => toggleAttendance(item)}
-                    disabled={busy}
-                  />
-                  <PrimaryButton
-                    title="Delete"
-                    variant="danger"
-                    icon="delete"
-                    onPress={() => removeAttendance(item.record_id)}
-                    disabled={busy}
-                  />
-                </View>
-              </View>
-            ))}
-          </View>
-        </GlassCard>
-      </ScrollView>
-    </KeyboardAvoidingView>
-  );
-
-  const insightsBody = (
-    <ScrollView contentContainerStyle={styles.scrollBody}>
-      <GlassCard>
-        <Text style={styles.sectionTitle}>Attendance Distribution</Text>
-        {analytics.overall_total ? (
-          <PieChart
-            data={[
-              {
-                name: "Present",
-                population: analytics.overall_present,
-                color: theme.success,
-                legendFontColor: theme.text,
-                legendFontSize: 12,
-              },
-              {
-                name: "Absent",
-                population: analytics.overall_total - analytics.overall_present,
-                color: theme.danger,
-                legendFontColor: theme.text,
-                legendFontSize: 12,
-              },
-            ]}
-            width={chartWidth}
-            height={210}
-            chartConfig={chartConfig}
-            accessor="population"
-            backgroundColor="transparent"
-            paddingLeft="12"
-            absolute
-          />
-        ) : (
-          <Text style={styles.emptyText}>No attendance marked yet.</Text>
-        )}
-      </GlassCard>
-
-      <GlassCard>
-        <Text style={styles.sectionTitle}>Course Percentage Trend</Text>
-        {analytics.courses.length ? (
-          <LineChart
-            data={{
-              labels: analytics.courses.map((item) => item.course_name.slice(0, 6)),
-              datasets: [{ data: analytics.courses.map((item) => item.percentage || 0) }],
-            }}
-            width={chartWidth}
-            height={220}
-            chartConfig={chartConfig}
-            bezier
-            yAxisSuffix="%"
-            style={styles.chart}
-          />
-        ) : (
-          <Text style={styles.emptyText}>Course analytics appear after marking attendance.</Text>
-        )}
-      </GlassCard>
-    </ScrollView>
-  );
-
-  const settingsBody = (
-    <ScrollView contentContainerStyle={styles.scrollBody}>
-      <GlassCard>
-        <Text style={styles.sectionTitle}>Admin Settings</Text>
-        <Text style={styles.rowMeta}>College: {user.college_name}</Text>
-        <Text style={styles.rowMeta}>Admin: {user.name}</Text>
-        <Text style={styles.rowMeta}>Students: {students.length}</Text>
-      </GlassCard>
-
-      <GlassCard>
-        <PrimaryButton
-          title="Open Developer Profile"
-          icon="account-circle"
-          variant="secondary"
-          onPress={() => setActiveTab("developer")}
-        />
-      </GlassCard>
-
-      <GlassCard>
-        <PrimaryButton title="Logout" icon="logout" variant="danger" onPress={() => onLogout()} />
-      </GlassCard>
-    </ScrollView>
-  );
-
-  const developerBody = <DeveloperCard />;
-
-  return (
-    <SafeAreaView style={styles.mainSafe}>
-      <View style={styles.pageHeader}>
-        <View>
-          <Text style={styles.appName}>Shree vedha attendance management</Text>
-          <Text style={styles.welcomeText}>Welcome, {user.name}</Text>
-        </View>
-        <View style={styles.headerAction}>
-          <Pressable onPress={loadAll} style={styles.iconBtn}>
-            <Ionicons name="refresh" size={20} color={theme.text} />
-          </Pressable>
-        </View>
-      </View>
-
-      {message ? <Text style={styles.banner}>{message}</Text> : null}
-
-      <View style={styles.flex}>
-        {activeTab === "dashboard" && dashboardBody}
-        {activeTab === "manage" && manageBody}
-        {activeTab === "insights" && insightsBody}
-        {activeTab === "settings" && settingsBody}
-        {activeTab === "developer" && developerBody}
-      </View>
-
-      <BottomTabs items={adminTabs} activeKey={activeTab} onPress={(next) => setActiveTab(next as AdminTab)} />
-    </SafeAreaView>
-  );
-}
-
-function StudentShell({ user, token, onLogout }: { user: User; token: string; onLogout: () => Promise<void> }) {
-  const [activeTab, setActiveTab] = useState<StudentTab>("dashboard");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [history, setHistory] = useState<AttendanceRecord[]>([]);
-  const [analytics, setAnalytics] = useState<AnalyticsResponse>(defaultAnalytics);
-  const [courseFilter, setCourseFilter] = useState("");
-
-  const cacheKey = `svam_student_cache_${user.user_id}`;
-  const { width } = useWindowDimensions();
-  const chartWidth = Math.max(width - 76, 270);
-
-  const loadAll = useCallback(async () => {
-    setBusy(true);
-    try {
-      const [coursesData, historyData, analyticsData] = await Promise.all([
-        getStudentCourses(token),
-        getStudentAttendance(token),
-        getStudentAnalytics(token),
-      ]);
-
-      setCourses(coursesData);
-      setHistory(historyData);
-      setAnalytics(analyticsData);
-
-      await AsyncStorage.setItem(cacheKey, JSON.stringify({ coursesData, historyData, analyticsData }));
-      setMessage("");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to load student data");
-    } finally {
-      setBusy(false);
-    }
-  }, [cacheKey, token]);
-
-  useEffect(() => {
-    const init = async () => {
-      const cached = await AsyncStorage.getItem(cacheKey);
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached) as {
-            coursesData: Course[];
-            historyData: AttendanceRecord[];
-            analyticsData: AnalyticsResponse;
-          };
-          setCourses(parsed.coursesData);
-          setHistory(parsed.historyData);
-          setAnalytics(parsed.analyticsData);
-        } catch {
-          await AsyncStorage.removeItem(cacheKey);
-        }
-      }
-      loadAll();
-    };
-
-    init();
-  }, [cacheKey, loadAll]);
-
-  const studentTabs: Array<{ key: StudentTab; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
-    { key: "dashboard", label: "Home", icon: "home-outline" },
-    { key: "attendance", label: "History", icon: "calendar-outline" },
     { key: "insights", label: "Insights", icon: "analytics-outline" },
     { key: "settings", label: "Settings", icon: "settings-outline" },
     { key: "developer", label: "Developer", icon: "code-slash-outline" },
   ];
 
-  const filteredHistory = history.filter((item) => {
-    if (!courseFilter) return true;
-    return item.course_id === courseFilter;
-  });
-
-  const dashboardBody = (
-    <ScrollView contentContainerStyle={styles.scrollBody}>
-      <ImageBackground source={{ uri: DASHBOARD_HERO_IMAGE }} style={styles.heroCard} imageStyle={styles.heroImage}>
-        <Text style={styles.heroTitle}>Student Dashboard</Text>
-        <Text style={styles.heroSubtitle}>Your attendance at a glance, updated by college approval.</Text>
-      </ImageBackground>
-
-      <View style={styles.statsGrid}>
-        <StatCard title="Overall Attendance" value={`${analytics.overall_percentage.toFixed(1)}%`} accent={theme.success} />
-        <StatCard title="Total Classes" value={analytics.overall_total.toString()} accent={theme.primary} />
-        <StatCard title="Courses" value={courses.length.toString()} accent={theme.warning} />
-      </View>
-
-      <GlassCard>
-        <Text style={styles.sectionTitle}>Course-wise Attendance</Text>
-        {busy && !analytics.courses.length ? <LoaderSkeleton /> : null}
-        {!analytics.courses.length && !busy ? <Text style={styles.emptyText}>No attendance records yet.</Text> : null}
-        <View style={styles.listWrap}>
-          {analytics.courses.map((item) => (
-            <View key={item.course_id} style={styles.courseStatRow}>
-              <View>
-                <Text style={styles.rowTitle}>{item.course_name}</Text>
-                <Text style={styles.rowMeta}>
-                  Present {item.present} / {item.total}
-                </Text>
-              </View>
-              <Text style={styles.percentText}>{item.percentage.toFixed(1)}%</Text>
-            </View>
-          ))}
-        </View>
-      </GlassCard>
-    </ScrollView>
-  );
-
-  const historyBody = (
-    <ScrollView contentContainerStyle={styles.scrollBody}>
-      <GlassCard>
-        <Text style={styles.sectionTitle}>Attendance History</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-          <Chip active={courseFilter === ""} title="All" onPress={() => setCourseFilter("")} />
-          {courses.map((course) => (
-            <Chip
-              key={course.course_id}
-              active={courseFilter === course.course_id}
-              title={course.code}
-              onPress={() => setCourseFilter(course.course_id)}
-            />
-          ))}
-        </ScrollView>
-
-        {!filteredHistory.length ? <Text style={styles.emptyText}>No history for this filter.</Text> : null}
-
-        <View style={styles.listWrap}>
-          {filteredHistory.map((item) => (
-            <View key={item.record_id} style={styles.historyCard}>
-              <View style={styles.historyHeader}>
-                <Text style={styles.rowTitle}>{item.course_name}</Text>
-                <Text style={[styles.statusPill, item.status === "present" ? styles.presentPill : styles.absentPill]}>
-                  {item.status.toUpperCase()}
-                </Text>
-              </View>
-              <Text style={styles.rowMeta}>{formatDate(item.date)}</Text>
-            </View>
-          ))}
-        </View>
-      </GlassCard>
-    </ScrollView>
-  );
-
-  const insightsBody = (
-    <ScrollView contentContainerStyle={styles.scrollBody}>
-      <GlassCard>
-        <Text style={styles.sectionTitle}>Present vs Absent</Text>
-        {analytics.overall_total ? (
-          <PieChart
-            data={[
-              {
-                name: "Present",
-                population: analytics.overall_present,
-                color: theme.success,
-                legendFontColor: theme.text,
-                legendFontSize: 12,
-              },
-              {
-                name: "Absent",
-                population: analytics.overall_total - analytics.overall_present,
-                color: theme.danger,
-                legendFontColor: theme.text,
-                legendFontSize: 12,
-              },
-            ]}
-            width={chartWidth}
-            height={210}
-            chartConfig={chartConfig}
-            accessor="population"
-            backgroundColor="transparent"
-            paddingLeft="12"
-            absolute
-          />
-        ) : (
-          <Text style={styles.emptyText}>Your chart appears once attendance is marked.</Text>
-        )}
-      </GlassCard>
-
-      <GlassCard>
-        <Text style={styles.sectionTitle}>Course Trend</Text>
-        {analytics.courses.length ? (
-          <LineChart
-            data={{
-              labels: analytics.courses.map((item) => item.course_name.slice(0, 6)),
-              datasets: [{ data: analytics.courses.map((item) => item.percentage || 0) }],
-            }}
-            width={chartWidth}
-            height={220}
-            chartConfig={chartConfig}
-            bezier
-            yAxisSuffix="%"
-            style={styles.chart}
-          />
-        ) : (
-          <Text style={styles.emptyText}>No trend data yet.</Text>
-        )}
-      </GlassCard>
-    </ScrollView>
-  );
-
-  const settingsBody = (
-    <ScrollView contentContainerStyle={styles.scrollBody}>
-      <GlassCard>
-        <Text style={styles.sectionTitle}>Student Settings</Text>
-        <Text style={styles.rowMeta}>Student: {user.name}</Text>
-        <Text style={styles.rowMeta}>College: {user.college_name}</Text>
-      </GlassCard>
-      <GlassCard>
-        <PrimaryButton
-          title="Open Developer Profile"
-          icon="account-circle"
-          variant="secondary"
-          onPress={() => setActiveTab("developer")}
-        />
-      </GlassCard>
-      <GlassCard>
-        <PrimaryButton title="Logout" icon="logout" variant="danger" onPress={() => onLogout()} />
-      </GlassCard>
-    </ScrollView>
-  );
-
   return (
-    <SafeAreaView style={styles.mainSafe}>
-      <View style={styles.pageHeader}>
+    <SafeAreaView style={styles.safeRoot}>
+      <View style={styles.headerRow}>
         <View>
-          <Text style={styles.appName}>Shree vedha attendance management</Text>
-          <Text style={styles.welcomeText}>Hello, {user.name}</Text>
+          <Text style={styles.headerTitle}>{profile?.college_name || "Shree Vedha College"}</Text>
+          <Text style={styles.headerSubtitle}>Admin: {user.name}</Text>
         </View>
-        <Pressable onPress={loadAll} style={styles.iconBtn}>
+        <Pressable testID="refresh-admin" style={styles.refreshBtn} onPress={refreshAll}>
           <Ionicons name="refresh" size={20} color={theme.text} />
         </Pressable>
       </View>
 
-      {message ? <Text style={styles.banner}>{message}</Text> : null}
+      {message ? <Text style={styles.messageText}>{message}</Text> : null}
 
-      <View style={styles.flex}>
-        {activeTab === "dashboard" && dashboardBody}
-        {activeTab === "attendance" && historyBody}
-        {activeTab === "insights" && insightsBody}
-        {activeTab === "settings" && settingsBody}
-        {activeTab === "developer" && <DeveloperCard />}
+      <View style={styles.flex1}>
+        {tab === "home" ? (
+          <ScrollView contentContainerStyle={styles.screenBody}>
+            <GlassCard>
+              <View style={styles.logoTitleRow}>
+                <Image source={{ uri: logoUri }} style={styles.heroLogo} />
+                <View style={styles.flex1}>
+                  <Text style={styles.sectionTitle}>{profile?.college_name || "Shree Vedha College"}</Text>
+                  <Text style={styles.smallText}>Attendance Management Dashboard</Text>
+                </View>
+              </View>
+            </GlassCard>
+
+            <View style={styles.statGrid}>
+              <StatCard label="Pending Students" value={`${pendingStudents.length}`} />
+              <StatCard label="Students" value={`${students.length}`} />
+              <StatCard label="Subjects" value={`${subjects.length}`} />
+            </View>
+
+            <GlassCard>
+              <Text style={styles.sectionTitle}>Pending Approvals</Text>
+              {busy && pendingStudents.length === 0 ? <LoaderSkeleton /> : null}
+              {!pendingStudents.length && !busy ? <Text style={styles.smallText}>No pending students.</Text> : null}
+              <View style={styles.listWrap}>
+                {pendingStudents.map((student) => (
+                  <View key={student.user_id} style={styles.rowCard}>
+                    <View>
+                      <Text style={styles.rowTitle}>{student.name}</Text>
+                      <Text style={styles.smallText}>{student.phone_number}</Text>
+                    </View>
+                    <PrimaryButton
+                      title="Approve"
+                      icon="check"
+                      onPress={async () => {
+                        setBusy(true);
+                        try {
+                          await approveStudent(token, student.user_id);
+                          await refreshAll();
+                          setMessage("Student approved");
+                        } catch (error) {
+                          setMessage(error instanceof Error ? error.message : "Approval failed");
+                          setBusy(false);
+                        }
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            </GlassCard>
+          </ScrollView>
+        ) : null}
+
+        {tab === "manage" ? (
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.flex1}>
+            <ScrollView contentContainerStyle={styles.screenBody} keyboardShouldPersistTaps="handled">
+              <GlassCard>
+                <Text style={styles.sectionTitle}>Create Semester</Text>
+                <TextField label="Semester Name" value={semesterName} onChangeText={setSemesterName} placeholder="BCA 1st Sem" />
+                <PrimaryButton
+                  title="Add Semester"
+                  icon="plus"
+                  disabled={!semesterName.trim()}
+                  onPress={async () => {
+                    setBusy(true);
+                    try {
+                      await createSemester(token, semesterName.trim());
+                      setSemesterName("");
+                      await refreshAll();
+                      setMessage("Semester created");
+                    } catch (error) {
+                      setMessage(error instanceof Error ? error.message : "Semester creation failed");
+                      setBusy(false);
+                    }
+                  }}
+                />
+              </GlassCard>
+
+              <GlassCard>
+                <Text style={styles.sectionTitle}>Create Subject</Text>
+                <Text style={styles.smallText}>Select semester</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowWrap}>
+                  {semesters.map((semester) => (
+                    <Chip
+                      key={semester.semester_id}
+                      title={semester.name}
+                      active={subjectSemester === semester.semester_id}
+                      onPress={() => setSubjectSemester(semester.semester_id)}
+                    />
+                  ))}
+                </ScrollView>
+                <TextField label="Subject Name" value={subjectName} onChangeText={setSubjectName} placeholder="English" />
+                <TextField label="Subject Code" value={subjectCode} onChangeText={setSubjectCode} placeholder="ENG01" />
+                <PrimaryButton
+                  title="Add Subject"
+                  icon="book-plus"
+                  disabled={!subjectSemester || !subjectName.trim() || !subjectCode.trim()}
+                  onPress={async () => {
+                    setBusy(true);
+                    try {
+                      await createSubject(token, {
+                        semester_id: subjectSemester,
+                        name: subjectName.trim(),
+                        code: subjectCode.trim(),
+                      });
+                      setSubjectName("");
+                      setSubjectCode("");
+                      await refreshAll();
+                      setMessage("Subject created");
+                    } catch (error) {
+                      setMessage(error instanceof Error ? error.message : "Subject creation failed");
+                      setBusy(false);
+                    }
+                  }}
+                />
+              </GlassCard>
+
+              <GlassCard>
+                <Text style={styles.sectionTitle}>Assign Subjects to Student</Text>
+                <Text style={styles.smallText}>Select student</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowWrap}>
+                  {students.map((student) => (
+                    <Chip
+                      key={student.user_id}
+                      title={student.name}
+                      active={selectedStudent === student.user_id}
+                      onPress={() => setSelectedStudent(student.user_id)}
+                    />
+                  ))}
+                </ScrollView>
+
+                <Text style={styles.smallText}>Select one or more subjects</Text>
+                <View style={styles.wrapContainer}>
+                  {subjects.map((subject) => {
+                    const active = selectedAssignSubjects.includes(subject.subject_id);
+                    return (
+                      <Chip
+                        key={subject.subject_id}
+                        title={subject.code}
+                        active={active}
+                        onPress={() => {
+                          setSelectedAssignSubjects((previous) =>
+                            previous.includes(subject.subject_id)
+                              ? previous.filter((item) => item !== subject.subject_id)
+                              : [...previous, subject.subject_id]
+                          );
+                        }}
+                      />
+                    );
+                  })}
+                </View>
+
+                <PrimaryButton
+                  title="Assign Subjects"
+                  icon="account-check"
+                  disabled={!selectedStudent || !selectedAssignSubjects.length}
+                  onPress={async () => {
+                    setBusy(true);
+                    try {
+                      await assignSubjects(token, {
+                        student_id: selectedStudent,
+                        subject_ids: selectedAssignSubjects,
+                      });
+                      setSelectedAssignSubjects([]);
+                      setMessage("Subjects assigned");
+                      setBusy(false);
+                    } catch (error) {
+                      setMessage(error instanceof Error ? error.message : "Assignment failed");
+                      setBusy(false);
+                    }
+                  }}
+                />
+              </GlassCard>
+
+              <GlassCard>
+                <Text style={styles.sectionTitle}>Bulk Attendance by Subject</Text>
+                <Text style={styles.smallText}>Select subject</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowWrap}>
+                  {subjects.map((subject) => (
+                    <Chip
+                      key={subject.subject_id}
+                      title={subject.name}
+                      active={bulkSubject === subject.subject_id}
+                      onPress={() => setBulkSubject(subject.subject_id)}
+                    />
+                  ))}
+                </ScrollView>
+
+                <TextField label="Date (YYYY-MM-DD)" value={bulkDate} onChangeText={setBulkDate} placeholder="2026-03-20" />
+
+                <Text style={styles.smallText}>Tap students who are present. Others become absent.</Text>
+                <View style={styles.listWrap}>
+                  {bulkStudents.map((student) => {
+                    const active = presentStudents.includes(student.user_id);
+                    return (
+                      <Pressable
+                        key={student.user_id}
+                        testID={`bulk-student-${student.user_id}`}
+                        style={[styles.selectRow, active && styles.selectRowActive]}
+                        onPress={() => togglePresent(student.user_id)}
+                      >
+                        <View style={styles.selectLabelWrap}>
+                          <Text style={styles.rowTitle}>{student.name}</Text>
+                          <Text style={styles.smallText}>{student.phone_number}</Text>
+                        </View>
+                        <MaterialCommunityIcons
+                          name={active ? "check-circle" : "circle-outline"}
+                          size={24}
+                          color={active ? theme.success : theme.mutedText}
+                        />
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <PrimaryButton
+                  title="Save Bulk Attendance"
+                  icon="content-save"
+                  disabled={!bulkSubject || !bulkDate.trim() || !bulkStudents.length}
+                  onPress={async () => {
+                    setBusy(true);
+                    try {
+                      await markBulkAttendance(token, {
+                        subject_id: bulkSubject,
+                        date: bulkDate.trim(),
+                        present_student_ids: presentStudents,
+                      });
+                      await refreshAll();
+                      setMessage("Bulk attendance saved");
+                    } catch (error) {
+                      setMessage(error instanceof Error ? error.message : "Bulk attendance failed");
+                      setBusy(false);
+                    }
+                  }}
+                />
+              </GlassCard>
+
+              <GlassCard>
+                <Text style={styles.sectionTitle}>CSV Import (Students + Subjects)</Text>
+                <Text style={styles.smallText}>Columns: student_name,phone_number,password,semester,subjects</Text>
+                <Text style={styles.smallText}>Subjects format: English|Computer Science|Maths</Text>
+                <TextField
+                  label="Paste CSV Text"
+                  value={csvText}
+                  onChangeText={setCsvText}
+                  placeholder="student_name,phone_number,password,semester,subjects"
+                  multiline
+                  style={styles.csvInput}
+                />
+                <PrimaryButton
+                  title="Import CSV"
+                  icon="file-upload"
+                  disabled={!csvText.trim()}
+                  onPress={async () => {
+                    setBusy(true);
+                    try {
+                      await importCsv(token, csvText);
+                      setCsvText("");
+                      await refreshAll();
+                      setMessage("CSV imported successfully");
+                    } catch (error) {
+                      setMessage(error instanceof Error ? error.message : "CSV import failed");
+                      setBusy(false);
+                    }
+                  }}
+                />
+              </GlassCard>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        ) : null}
+
+        {tab === "insights" ? (
+          <ScrollView contentContainerStyle={styles.screenBody}>
+            <GlassCard>
+              <Text style={styles.sectionTitle}>Student-Subject Insights</Text>
+              {!insights.length ? <Text style={styles.smallText}>No insight data yet.</Text> : null}
+              <View style={styles.listWrap}>
+                {insights.map((entry) => (
+                  <GlassCard key={`${entry.student_id}-${entry.semester_id}`} style={styles.innerCard}>
+                    <Text style={styles.rowTitle}>{entry.semester_name}</Text>
+                    <Text style={styles.smallText}>{entry.student_name}</Text>
+                    {entry.subjects.length === 0 ? <Text style={styles.smallText}>No subjects assigned.</Text> : null}
+                    {entry.subjects.map((subject) => (
+                      <View key={subject.subject_id} style={styles.percentRow}>
+                        <Text style={styles.smallText}>{subject.subject_name}</Text>
+                        <Text style={styles.percentText}>{subject.percentage.toFixed(1)}%</Text>
+                      </View>
+                    ))}
+                  </GlassCard>
+                ))}
+              </View>
+            </GlassCard>
+          </ScrollView>
+        ) : null}
+
+        {tab === "settings" ? (
+          <ScrollView contentContainerStyle={styles.screenBody}>
+            <GlassCard>
+              <Text style={styles.sectionTitle}>College Name</Text>
+              <TextField label="College Name" value={collegeName} onChangeText={setCollegeName} placeholder="Shree Vedha College" />
+              <PrimaryButton
+                title="Update College Name"
+                icon="pencil"
+                disabled={!collegeName.trim()}
+                onPress={async () => {
+                  setBusy(true);
+                  try {
+                    const updated = await updateCollegeProfile(token, { college_name: collegeName.trim() });
+                    onProfileUpdated(updated);
+                    setMessage("College name updated");
+                    setBusy(false);
+                  } catch (error) {
+                    setMessage(error instanceof Error ? error.message : "Update failed");
+                    setBusy(false);
+                  }
+                }}
+              />
+            </GlassCard>
+
+            <GlassCard>
+              <Text style={styles.sectionTitle}>Create Another Admin</Text>
+              <TextField label="Admin Name" value={adminName} onChangeText={setAdminName} placeholder="Admin Name" />
+              <TextField
+                label="Admin Phone"
+                value={adminPhone}
+                onChangeText={setAdminPhone}
+                placeholder="+91XXXXXXXXXX"
+                keyboardType="phone-pad"
+              />
+              <TextField label="Password" value={adminPassword} onChangeText={setAdminPassword} placeholder="Password" secureTextEntry />
+              <PrimaryButton
+                title="Create Admin"
+                icon="account-plus"
+                disabled={!adminName.trim() || !adminPhone.trim() || !adminPassword.trim()}
+                onPress={async () => {
+                  setBusy(true);
+                  try {
+                    await createAdmin(token, {
+                      name: adminName.trim(),
+                      phone_number: adminPhone.trim(),
+                      password: adminPassword.trim(),
+                    });
+                    setAdminName("");
+                    setAdminPhone("");
+                    setAdminPassword("");
+                    setMessage("Admin created");
+                    setBusy(false);
+                  } catch (error) {
+                    setMessage(error instanceof Error ? error.message : "Admin creation failed");
+                    setBusy(false);
+                  }
+                }}
+              />
+            </GlassCard>
+
+            <GlassCard>
+              <PrimaryButton title="Open Developer" icon="account" variant="secondary" onPress={() => setTab("developer")} />
+            </GlassCard>
+
+            <GlassCard>
+              <PrimaryButton title="Logout" icon="logout" variant="danger" onPress={() => onLogout()} />
+            </GlassCard>
+          </ScrollView>
+        ) : null}
+
+        {tab === "developer" ? <DeveloperCard /> : null}
       </View>
 
-      <BottomTabs items={studentTabs} activeKey={activeTab} onPress={(next) => setActiveTab(next as StudentTab)} />
+      <BottomTabs items={tabs} activeKey={tab} onPress={(next) => setTab(next as AdminTab)} />
     </SafeAreaView>
+  );
+}
+
+function StudentApp({
+  token,
+  user,
+  profile,
+  onLogout,
+}: {
+  token: string;
+  user: User;
+  profile: CollegeProfile | null;
+  onLogout: () => Promise<void>;
+}) {
+  const [tab, setTab] = useState<StudentTab>("home");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  const [insights, setInsights] = useState<SubjectInsight[]>([]);
+  const [subjectFilter, setSubjectFilter] = useState("");
+
+  const refreshAll = useCallback(async () => {
+    setBusy(true);
+    try {
+      const [subjectData, attendanceData, insightData] = await Promise.all([
+        getStudentSubjects(token),
+        getStudentAttendance(token),
+        getStudentInsights(token),
+      ]);
+      setSubjects(subjectData);
+      setAttendance(attendanceData);
+      setInsights(insightData);
+      setMessage("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to load student data");
+    } finally {
+      setBusy(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  const logoUri = profile?.logo_base64 ? profile.logo_base64 : COLLEGE_LOGO_IMAGE;
+  const tabs: { key: StudentTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+    { key: "home", label: "Home", icon: "home-outline" },
+    { key: "history", label: "History", icon: "calendar-outline" },
+    { key: "insights", label: "Insights", icon: "stats-chart-outline" },
+    { key: "settings", label: "Settings", icon: "settings-outline" },
+    { key: "developer", label: "Developer", icon: "code-slash-outline" },
+  ];
+
+  const filteredAttendance = attendance.filter((item) => (subjectFilter ? item.subject_id === subjectFilter : true));
+
+  return (
+    <SafeAreaView style={styles.safeRoot}>
+      <View style={styles.headerRow}>
+        <View>
+          <Text style={styles.headerTitle}>{profile?.college_name || "Shree Vedha College"}</Text>
+          <Text style={styles.headerSubtitle}>{user.name}</Text>
+        </View>
+        <Pressable testID="refresh-student" style={styles.refreshBtn} onPress={refreshAll}>
+          <Ionicons name="refresh" size={20} color={theme.text} />
+        </Pressable>
+      </View>
+
+      {message ? <Text style={styles.messageText}>{message}</Text> : null}
+
+      <View style={styles.flex1}>
+        {tab === "home" ? (
+          <ScrollView contentContainerStyle={styles.screenBody}>
+            <GlassCard>
+              <View style={styles.logoTitleRow}>
+                <Image source={{ uri: logoUri }} style={styles.heroLogo} />
+                <View style={styles.flex1}>
+                  <Text style={styles.sectionTitle}>{profile?.college_name || "Shree Vedha College"}</Text>
+                  <Text style={styles.smallText}>Student Attendance Overview</Text>
+                </View>
+              </View>
+            </GlassCard>
+
+            <GlassCard>
+              <Text style={styles.sectionTitle}>Subject Tracking</Text>
+              {busy && !insights.length ? <LoaderSkeleton /> : null}
+              {!insights.length && !busy ? <Text style={styles.smallText}>No attendance tracked yet.</Text> : null}
+              <View style={styles.listWrap}>
+                {insights.map((item) => (
+                  <View key={item.subject_id} style={styles.percentRow}>
+                    <Text style={styles.rowTitle}>{item.subject_name}</Text>
+                    <Text style={styles.percentText}>{item.percentage.toFixed(1)}%</Text>
+                  </View>
+                ))}
+              </View>
+            </GlassCard>
+          </ScrollView>
+        ) : null}
+
+        {tab === "history" ? (
+          <ScrollView contentContainerStyle={styles.screenBody}>
+            <GlassCard>
+              <Text style={styles.sectionTitle}>Attendance History</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowWrap}>
+                <Chip title="All" active={subjectFilter === ""} onPress={() => setSubjectFilter("")} />
+                {subjects.map((subject) => (
+                  <Chip
+                    key={subject.subject_id}
+                    title={subject.code}
+                    active={subjectFilter === subject.subject_id}
+                    onPress={() => setSubjectFilter(subject.subject_id)}
+                  />
+                ))}
+              </ScrollView>
+              {!filteredAttendance.length ? <Text style={styles.smallText}>No attendance records.</Text> : null}
+              <View style={styles.listWrap}>
+                {filteredAttendance.map((entry) => (
+                  <View key={entry.record_id} style={styles.rowCard}>
+                    <View>
+                      <Text style={styles.rowTitle}>{entry.subject_name}</Text>
+                      <Text style={styles.smallText}>{formatDate(entry.date)}</Text>
+                    </View>
+                    <Text style={[styles.statusBadge, entry.status === "present" ? styles.presentBadge : styles.absentBadge]}>
+                      {entry.status.toUpperCase()}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </GlassCard>
+          </ScrollView>
+        ) : null}
+
+        {tab === "insights" ? (
+          <ScrollView contentContainerStyle={styles.screenBody}>
+            <GlassCard>
+              <Text style={styles.sectionTitle}>Subject Percentages</Text>
+              {!insights.length ? <Text style={styles.smallText}>No insights available yet.</Text> : null}
+              {insights.map((item) => (
+                <View key={item.subject_id} style={styles.percentDetailRow}>
+                  <View>
+                    <Text style={styles.rowTitle}>{item.subject_name}</Text>
+                    <Text style={styles.smallText}>
+                      Present {item.present} / {item.total}
+                    </Text>
+                  </View>
+                  <Text style={styles.percentText}>{item.percentage.toFixed(1)}%</Text>
+                </View>
+              ))}
+            </GlassCard>
+          </ScrollView>
+        ) : null}
+
+        {tab === "settings" ? (
+          <ScrollView contentContainerStyle={styles.screenBody}>
+            <GlassCard>
+              <Text style={styles.sectionTitle}>Account</Text>
+              <Text style={styles.smallText}>Phone: {user.phone_number}</Text>
+              <Text style={styles.smallText}>Role: Student</Text>
+            </GlassCard>
+            <GlassCard>
+              <PrimaryButton title="Open Developer" icon="account" variant="secondary" onPress={() => setTab("developer")} />
+            </GlassCard>
+            <GlassCard>
+              <PrimaryButton title="Logout" icon="logout" variant="danger" onPress={() => onLogout()} />
+            </GlassCard>
+          </ScrollView>
+        ) : null}
+
+        {tab === "developer" ? <DeveloperCard /> : null}
+      </View>
+
+      <BottomTabs items={tabs} activeKey={tab} onPress={(next) => setTab(next as StudentTab)} />
+    </SafeAreaView>
+  );
+}
+
+function DeveloperCard() {
+  return (
+    <ScrollView contentContainerStyle={styles.screenBody}>
+      <GlassCard>
+        <Image source={{ uri: COLLEGE_LOGO_IMAGE }} style={styles.pendingLogo} />
+        <Text style={styles.sectionTitle}>Developer</Text>
+        <Text style={styles.rowTitle}>Mohammed Maaz</Text>
+        <PrimaryButton
+          title="@_themaaz"
+          icon="instagram"
+          variant="secondary"
+          onPress={() => Linking.openURL("https://instagram.com/_themaaz")}
+        />
+      </GlassCard>
+    </ScrollView>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <GlassCard style={styles.statCard}>
+      <Text style={styles.smallText}>{label}</Text>
+      <Text style={styles.statValue}>{value}</Text>
+    </GlassCard>
   );
 }
 
@@ -1123,28 +1048,29 @@ function BottomTabs({
   activeKey,
   onPress,
 }: {
-  items: Array<{ key: string; label: string; icon: keyof typeof Ionicons.glyphMap }>;
+  items: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap }[];
   activeKey: string;
   onPress: (key: string) => void;
 }) {
   return (
     <View style={styles.tabBar}>
-      {items.map((item) => {
-        const active = item.key === activeKey;
-        return (
-          <Pressable key={item.key} testID={`tab-${item.key}`} onPress={() => onPress(item.key)} style={styles.tabBtn}>
-            <Ionicons name={item.icon} size={20} color={active ? theme.text : theme.mutedText} />
-            <Text style={[styles.tabText, active && styles.tabTextActive]}>{item.label}</Text>
-          </Pressable>
-        );
-      })}
+      {items.map((item) => (
+        <Pressable key={item.key} testID={`tab-${item.key}`} style={styles.tabBtn} onPress={() => onPress(item.key)}>
+          <Ionicons name={item.icon} size={20} color={activeKey === item.key ? theme.text : theme.mutedText} />
+          <Text style={[styles.tabText, activeKey === item.key && styles.tabTextActive]}>{item.label}</Text>
+        </Pressable>
+      ))}
     </View>
   );
 }
 
 function Chip({ title, active, onPress }: { title: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
+    <Pressable
+      testID={`chip-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+      style={[styles.chip, active && styles.chipActive]}
+      onPress={onPress}
+    >
       <Text style={[styles.chipText, active && styles.chipTextActive]}>{title}</Text>
     </Pressable>
   );
@@ -1152,140 +1078,97 @@ function Chip({ title, active, onPress }: { title: string; active: boolean; onPr
 
 function RoleChip({ title, active, onPress }: { title: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={[styles.roleChip, active && styles.roleChipActive]}>
+    <Pressable
+      testID={`role-${title.toLowerCase()}`}
+      style={[styles.roleChip, active && styles.roleChipActive]}
+      onPress={onPress}
+    >
       <Text style={[styles.roleChipText, active && styles.roleChipTextActive]}>{title}</Text>
     </Pressable>
   );
 }
 
-function StatCard({ title, value, accent }: { title: string; value: string; accent: string }) {
-  return (
-    <GlassCard style={styles.statCard}>
-      <Text style={styles.statTitle}>{title}</Text>
-      <Text style={[styles.statValue, { color: accent }]}>{value}</Text>
-    </GlassCard>
-  );
-}
-
-function DeveloperCard() {
-  return (
-    <ImageBackground source={{ uri: DEVELOPER_BACKGROUND_IMAGE }} style={styles.flex} resizeMode="cover">
-      <ScrollView contentContainerStyle={styles.scrollBody}>
-        <GlassCard>
-          <Text style={styles.sectionTitle}>Developer</Text>
-          <Text style={styles.rowTitle}>Mohammed Maaz</Text>
-          <Text style={styles.rowMeta}>Premium UI crafted for college attendance management</Text>
-          <PrimaryButton
-            title="@_themaaz"
-            icon="instagram"
-            variant="secondary"
-            onPress={() => Linking.openURL("https://instagram.com/_themaaz")}
-          />
-        </GlassCard>
-      </ScrollView>
-    </ImageBackground>
-  );
-}
-
-const chartConfig = {
-  backgroundGradientFrom: theme.card,
-  backgroundGradientTo: theme.card,
-  decimalPlaces: 0,
-  color: (opacity = 1) => `rgba(99, 102, 241, ${opacity})`,
-  labelColor: (opacity = 1) => `rgba(250, 250, 250, ${opacity})`,
-  propsForDots: {
-    r: "4",
-    strokeWidth: "2",
-    stroke: theme.primary,
-  },
-};
-
 const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-  },
-  mainSafe: {
+  safeRoot: {
     flex: 1,
     backgroundColor: theme.background,
-    paddingTop: 10,
-    paddingBottom: 10,
   },
-  bootLoader: {
+  loaderScreen: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: theme.background,
   },
-  authScroll: {
+  flex1: {
+    flex: 1,
+  },
+  authContainer: {
     flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 28,
     justifyContent: "center",
-    paddingHorizontal: 24,
-    paddingVertical: 30,
-    gap: 20,
+    gap: 16,
+  },
+  authLogo: {
+    width: 110,
+    height: 110,
+    alignSelf: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
   },
   authTitle: {
     color: theme.text,
-    fontSize: 32,
+    fontSize: 30,
+    lineHeight: 36,
     fontWeight: "800",
-    lineHeight: 38,
-  },
-  authSubtitle: {
-    color: theme.mutedText,
-    fontSize: 15,
+    textAlign: "center",
   },
   authCard: {
-    gap: 14,
+    gap: 12,
   },
   modeRow: {
     flexDirection: "row",
-    backgroundColor: "rgba(39,39,42,0.7)",
-    borderRadius: 12,
+    backgroundColor: "rgba(27,39,84,0.8)",
+    borderRadius: 14,
     padding: 4,
     gap: 8,
   },
-  modeButton: {
+  modeBtn: {
     flex: 1,
     minHeight: 44,
-    borderRadius: 10,
     justifyContent: "center",
     alignItems: "center",
+    borderRadius: 10,
   },
-  modeButtonActive: {
+  modeBtnActive: {
     backgroundColor: theme.primary,
   },
   modeText: {
     color: theme.mutedText,
-    fontWeight: "600",
     fontSize: 14,
+    fontWeight: "700",
   },
   modeTextActive: {
     color: theme.text,
   },
-  roleSelector: {
-    gap: 8,
-  },
-  fieldTitle: {
-    color: theme.text,
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  roleButtonsWrap: {
+  rowWrap: {
     flexDirection: "row",
     gap: 10,
     flexWrap: "wrap",
+    paddingVertical: 4,
   },
   roleChip: {
     minHeight: 44,
-    paddingHorizontal: 16,
-    borderRadius: 22,
-    justifyContent: "center",
-    alignItems: "center",
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: theme.border,
-    backgroundColor: "rgba(39,39,42,0.6)",
+    backgroundColor: "rgba(27,39,84,0.7)",
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    alignItems: "center",
   },
   roleChipActive: {
-    backgroundColor: "rgba(99,102,241,0.25)",
+    backgroundColor: theme.primary,
     borderColor: theme.primary,
   },
   roleChipText: {
@@ -1295,259 +1178,231 @@ const styles = StyleSheet.create({
   roleChipTextActive: {
     color: theme.text,
   },
+  forgotCard: {
+    padding: 12,
+    gap: 10,
+  },
+  linkText: {
+    color: theme.warning,
+    fontSize: 13,
+    fontWeight: "700",
+  },
   messageText: {
     color: theme.warning,
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
+    paddingHorizontal: 20,
   },
-  pendingWrap: {
+  centerWrap: {
     flex: 1,
     justifyContent: "center",
-    paddingHorizontal: 24,
-    paddingVertical: 28,
+    paddingHorizontal: 20,
   },
   pendingCard: {
-    gap: 12,
-    alignItems: "flex-start",
-  },
-  pendingTitle: {
-    color: theme.text,
-    fontSize: 26,
-    fontWeight: "700",
-  },
-  pendingText: {
-    color: theme.mutedText,
-    fontSize: 15,
-    lineHeight: 21,
-  },
-  pendingActions: {
-    width: "100%",
+    alignItems: "center",
     gap: 10,
   },
-  pageHeader: {
+  pendingLogo: {
+    width: 84,
+    height: 84,
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+  },
+  headerRow: {
     paddingHorizontal: 20,
-    paddingVertical: 8,
+    paddingVertical: 10,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-  appName: {
+  headerTitle: {
     color: theme.text,
     fontSize: 18,
     fontWeight: "800",
-    maxWidth: 270,
+    maxWidth: 260,
   },
-  welcomeText: {
+  headerSubtitle: {
     color: theme.mutedText,
-    fontSize: 13,
     marginTop: 4,
   },
-  headerAction: {
-    flexDirection: "row",
-  },
-  iconBtn: {
-    minWidth: 44,
-    minHeight: 44,
+  refreshBtn: {
+    width: 44,
+    height: 44,
     borderRadius: 22,
-    alignItems: "center",
     justifyContent: "center",
+    alignItems: "center",
     borderWidth: 1,
     borderColor: theme.border,
-    backgroundColor: "rgba(39,39,42,0.8)",
+    backgroundColor: theme.secondary,
   },
-  banner: {
-    color: theme.warning,
-    fontSize: 13,
-    fontWeight: "600",
-    paddingHorizontal: 20,
-    paddingBottom: 6,
-  },
-  scrollBody: {
+  screenBody: {
     paddingHorizontal: 20,
     paddingVertical: 20,
-    gap: 16,
+    gap: 14,
   },
-  heroCard: {
-    minHeight: 144,
-    borderRadius: 22,
-    overflow: "hidden",
-    padding: 18,
-    justifyContent: "flex-end",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-  },
-  heroImage: {
-    opacity: 0.7,
-  },
-  heroTitle: {
-    color: theme.text,
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  heroSubtitle: {
-    color: theme.text,
-    fontSize: 14,
-    marginTop: 6,
-    opacity: 0.85,
-  },
-  statsGrid: {
+  logoTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
   },
-  statCard: {
-    minHeight: 90,
-    justifyContent: "center",
-    gap: 8,
-  },
-  statTitle: {
-    color: theme.mutedText,
-    fontSize: 13,
-  },
-  statValue: {
-    fontSize: 26,
-    fontWeight: "800",
-  },
-  sectionHeadRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
+  heroLogo: {
+    width: 68,
+    height: 68,
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
   },
   sectionTitle: {
     color: theme.text,
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "700",
   },
-  sectionNote: {
+  smallText: {
     color: theme.mutedText,
     fontSize: 13,
-    marginBottom: 4,
+    lineHeight: 18,
+  },
+  statGrid: {
+    gap: 10,
+  },
+  statCard: {
+    minHeight: 82,
+    justifyContent: "center",
+    gap: 6,
+  },
+  statValue: {
+    color: theme.text,
+    fontSize: 26,
+    fontWeight: "800",
   },
   listWrap: {
     gap: 10,
   },
   rowCard: {
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 14,
     padding: 12,
-  },
-  rowHeader: {
+    backgroundColor: "rgba(27,39,84,0.5)",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
   },
   rowTitle: {
     color: theme.text,
     fontSize: 16,
     fontWeight: "700",
   },
-  rowMeta: {
-    color: theme.mutedText,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  chipsRow: {
-    gap: 10,
-    paddingVertical: 4,
-    paddingRight: 20,
-  },
   chip: {
-    minHeight: 40,
+    minHeight: 44,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: theme.border,
-    backgroundColor: "rgba(39,39,42,0.7)",
+    backgroundColor: theme.secondary,
     paddingHorizontal: 16,
     justifyContent: "center",
   },
   chipActive: {
     borderColor: theme.primary,
-    backgroundColor: "rgba(99,102,241,0.25)",
+    backgroundColor: theme.primary,
   },
   chipText: {
     color: theme.mutedText,
-    fontWeight: "600",
     fontSize: 13,
+    fontWeight: "700",
   },
   chipTextActive: {
     color: theme.text,
   },
-  rowGap: {
-    gap: 8,
+  wrapContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
   },
-  historyCard: {
+  selectRow: {
+    minHeight: 52,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: theme.border,
-    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(27,39,84,0.45)",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  selectRowActive: {
+    borderColor: theme.success,
+    backgroundColor: "rgba(34,197,94,0.12)",
+  },
+  selectLabelWrap: {
+    flex: 1,
+  },
+  csvInput: {
+    minHeight: 140,
+    textAlignVertical: "top",
+    paddingTop: 12,
+  },
+  innerCard: {
+    gap: 8,
     padding: 12,
-    backgroundColor: "rgba(39,39,42,0.6)",
-    gap: 8,
   },
-  historyHeader: {
+  percentRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    gap: 8,
-  },
-  statusPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: "800",
-    color: theme.text,
-    overflow: "hidden",
-  },
-  presentPill: {
-    backgroundColor: "rgba(34,197,94,0.8)",
-  },
-  absentPill: {
-    backgroundColor: "rgba(239,68,68,0.8)",
-  },
-  historyActions: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  chart: {
-    borderRadius: 16,
-    marginTop: 12,
-  },
-  courseStatRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
+    paddingVertical: 8,
+  },
+  percentDetailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+    paddingVertical: 10,
   },
   percentText: {
     color: theme.success,
+    fontSize: 18,
     fontWeight: "800",
-    fontSize: 16,
   },
-  emptyText: {
-    color: theme.mutedText,
-    fontSize: 14,
-    lineHeight: 20,
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    overflow: "hidden",
+    fontSize: 11,
+    fontWeight: "800",
+    color: theme.text,
+  },
+  presentBadge: {
+    backgroundColor: "rgba(34,197,94,0.8)",
+  },
+  absentBadge: {
+    backgroundColor: "rgba(239,68,68,0.8)",
   },
   tabBar: {
     borderTopWidth: 1,
     borderTopColor: theme.border,
-    backgroundColor: "rgba(9,9,11,0.95)",
+    backgroundColor: "rgba(7,11,26,0.95)",
     flexDirection: "row",
     paddingHorizontal: 8,
-    paddingTop: 8,
-    paddingBottom: Platform.select({ ios: 22, android: 12, default: 12 }),
+    paddingTop: 6,
+    paddingBottom: Platform.select({ ios: 20, android: 10, default: 10 }),
   },
   tabBtn: {
     flex: 1,
     minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
+    gap: 2,
   },
   tabText: {
     color: theme.mutedText,
     fontSize: 11,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   tabTextActive: {
     color: theme.text,

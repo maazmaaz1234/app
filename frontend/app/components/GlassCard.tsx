@@ -27,3 +27,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
 });
+
+export default function GlassCardRoute() {
+  return null;
+}

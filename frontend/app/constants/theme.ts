@@ -1,13 +1,15 @@
 export const theme = {
-  background: "#09090b",
-  card: "#18181b",
-  cardGlass: "rgba(24,24,27,0.85)",
-  border: "#27272a",
+  background: "#070b1a",
+  card: "#0f1734",
+  cardGlass: "rgba(15,23,52,0.88)",
+  border: "#23336d",
   text: "#fafafa",
-  mutedText: "#a1a1aa",
-  primary: "#6366f1",
-  secondary: "#27272a",
+  mutedText: "#a9b6df",
+  primary: "#12309d",
+  secondary: "#1b2754",
   success: "#22c55e",
   danger: "#ef4444",
-  warning: "#f59e0b",
+  warning: "#fbbf24",
 };
+
+export default theme;

@@ -25,3 +25,7 @@ const styles = StyleSheet.create({
     borderColor: theme.border,
   },
 });
+
+export default function LoaderSkeletonRoute() {
+  return null;
+}

@@ -1,25 +1,27 @@
 import Constants from "expo-constants";
 
 import {
-  AnalyticsResponse,
   AttendanceRecord,
   AuthResponse,
-  Course,
-  PendingStudent,
+  CollegeProfile,
   Semester,
+  StudentInsightGroup,
+  Subject,
+  SubjectInsight,
   User,
 } from "../types";
 
 const expoConfigExtra = Constants.expoConfig?.extra as { backendUrl?: string } | undefined;
 const backendBaseUrl =
   expoConfigExtra?.backendUrl?.replace(/\/$/, "") ||
+  process.env.EXPO_BACKEND_URL?.replace(/\/$/, "") ||
   process.env.EXPO_PUBLIC_BACKEND_URL?.replace(/\/$/, "") ||
   "";
 
 async function request<T>(
   endpoint: string,
   options: {
-    method?: "GET" | "POST" | "PUT" | "DELETE";
+    method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
     token?: string;
     body?: Record<string, unknown>;
   } = {}
@@ -48,24 +50,31 @@ async function request<T>(
 
 export function signUp(data: {
   name: string;
-  email: string;
+  phone_number: string;
   password: string;
-  role: "college" | "student";
-  college_name: string;
+  role: "admin" | "student";
 }) {
   return request<AuthResponse>("/auth/signup", { method: "POST", body: data });
 }
 
-export function login(data: { email: string; password: string }) {
+export function login(data: { phone_number: string; password: string }) {
   return request<AuthResponse>("/auth/login", { method: "POST", body: data });
+}
+
+export function forgotPasswordAdmin(data: { phone_number: string; new_password: string }) {
+  return request<{ message: string }>("/auth/forgot-password-admin", { method: "POST", body: data });
 }
 
 export function getMe(token: string) {
   return request<User>("/auth/me", { token });
 }
 
+export function getCollegeProfile() {
+  return request<CollegeProfile>("/college/profile");
+}
+
 export function getPendingStudents(token: string) {
-  return request<PendingStudent[]>("/admin/pending-students", { token });
+  return request<User[]>("/admin/pending-students", { token });
 }
 
 export function approveStudent(token: string, studentId: string) {
@@ -77,6 +86,25 @@ export function approveStudent(token: string, studentId: string) {
 
 export function getApprovedStudents(token: string) {
   return request<User[]>("/admin/students", { token });
+}
+
+export function createAdmin(token: string, payload: { name: string; phone_number: string; password: string }) {
+  return request<User>("/admin/create-admin", {
+    method: "POST",
+    token,
+    body: payload,
+  });
+}
+
+export function updateCollegeProfile(
+  token: string,
+  payload: { college_name?: string; logo_base64?: string | null }
+) {
+  return request<CollegeProfile>("/admin/college-profile", {
+    method: "PATCH",
+    token,
+    body: payload,
+  });
 }
 
 export function createSemester(token: string, name: string) {
@@ -91,67 +119,77 @@ export function getSemesters(token: string) {
   return request<Semester[]>("/admin/semesters", { token });
 }
 
-export function createCourse(token: string, payload: { semester_id: string; name: string; code: string }) {
-  return request<Course>("/admin/courses", {
+export function createSubject(token: string, payload: { semester_id: string; name: string; code: string }) {
+  return request<Subject>("/admin/subjects", {
     method: "POST",
     token,
     body: payload,
   });
 }
 
-export function getCourses(token: string, semesterId?: string) {
+export function getSubjects(token: string, semesterId?: string) {
   const query = semesterId ? `?semester_id=${encodeURIComponent(semesterId)}` : "";
-  return request<Course[]>(`/admin/courses${query}`, { token });
+  return request<Subject[]>(`/admin/subjects${query}`, { token });
 }
 
-export function markAttendance(
-  token: string,
-  payload: { course_id: string; student_id: string; date: string; status: "present" | "absent" }
-) {
-  return request<AttendanceRecord>("/admin/attendance/mark", {
+export function assignSubjects(token: string, payload: { student_id: string; subject_ids: string[] }) {
+  return request<{ message: string }>("/admin/assign-subjects", {
     method: "POST",
     token,
     body: payload,
   });
 }
 
-export function updateAttendance(token: string, recordId: string, status: "present" | "absent") {
-  return request<AttendanceRecord>(`/admin/attendance/${recordId}`, {
-    method: "PUT",
+export function getSubjectStudents(token: string, subjectId: string) {
+  return request<User[]>(`/admin/subject-students?subject_id=${encodeURIComponent(subjectId)}`, { token });
+}
+
+export function markBulkAttendance(
+  token: string,
+  payload: { subject_id: string; date: string; present_student_ids: string[] }
+) {
+  return request<{ message: string; updated_records: number }>("/admin/attendance/bulk", {
+    method: "POST",
     token,
-    body: { status },
+    body: payload,
   });
 }
 
-export function deleteAttendance(token: string, recordId: string) {
-  return request<{ message: string }>(`/admin/attendance/${recordId}`, {
-    method: "DELETE",
-    token,
-  });
-}
-
-export function getAdminAttendance(token: string, filters?: { course_id?: string; student_id?: string }) {
+export function getAdminAttendance(token: string, filters?: { subject_id?: string; student_id?: string }) {
   const chunks: string[] = [];
-  if (filters?.course_id) chunks.push(`course_id=${encodeURIComponent(filters.course_id)}`);
+  if (filters?.subject_id) chunks.push(`subject_id=${encodeURIComponent(filters.subject_id)}`);
   if (filters?.student_id) chunks.push(`student_id=${encodeURIComponent(filters.student_id)}`);
   const query = chunks.length ? `?${chunks.join("&")}` : "";
   return request<AttendanceRecord[]>(`/admin/attendance${query}`, { token });
 }
 
-export function getAdminAnalytics(token: string, courseId?: string) {
-  const query = courseId ? `?course_id=${encodeURIComponent(courseId)}` : "";
-  return request<AnalyticsResponse>(`/admin/analytics${query}`, { token });
+export function getAdminInsights(token: string) {
+  return request<{ insights: StudentInsightGroup[] }>("/admin/insights", { token });
 }
 
-export function getStudentCourses(token: string) {
-  return request<Course[]>("/student/courses", { token });
+export function importCsv(token: string, csvText: string) {
+  return request<{ message: string; students_created: number; students_updated: number; subjects_created: number }>(
+    "/admin/import-csv",
+    {
+      method: "POST",
+      token,
+      body: { csv_text: csvText },
+    }
+  );
 }
 
-export function getStudentAttendance(token: string, courseId?: string) {
-  const query = courseId ? `?course_id=${encodeURIComponent(courseId)}` : "";
+export function getStudentSubjects(token: string) {
+  return request<Subject[]>("/student/subjects", { token });
+}
+
+export function getStudentAttendance(token: string, subjectId?: string) {
+  const query = subjectId ? `?subject_id=${encodeURIComponent(subjectId)}` : "";
   return request<AttendanceRecord[]>(`/student/attendance${query}`, { token });
 }
 
-export function getStudentAnalytics(token: string) {
-  return request<AnalyticsResponse>("/student/analytics", { token });
+export function getStudentInsights(token: string) {
+  return request<SubjectInsight[]>("/student/insights", { token });
 }
+
+const routePlaceholder = { api: "internal" };
+export default routePlaceholder;

@@ -1,12 +1,12 @@
-export type UserRole = "college" | "student";
+export type UserRole = "admin" | "student";
 
 export interface User {
   user_id: string;
   name: string;
-  email: string;
+  phone_number: string;
   role: UserRole;
-  college_name: string;
   approved: boolean;
+  semester_id?: string | null;
   created_at: string;
 }
 
@@ -19,23 +19,21 @@ export interface AuthResponse {
 export interface Semester {
   semester_id: string;
   name: string;
-  college_name: string;
   created_at: string;
 }
 
-export interface Course {
-  course_id: string;
+export interface Subject {
+  subject_id: string;
   semester_id: string;
   name: string;
   code: string;
-  college_name: string;
   created_at: string;
 }
 
 export interface AttendanceRecord {
   record_id: string;
-  course_id: string;
-  course_name: string;
+  subject_id: string;
+  subject_name: string;
   student_id: string;
   student_name: string;
   date: string;
@@ -48,22 +46,32 @@ export interface AttendanceRecord {
 export interface PendingStudent {
   user_id: string;
   name: string;
-  email: string;
-  college_name: string;
+  phone_number: string;
   created_at: string;
 }
 
-export interface AnalyticsCourse {
-  course_id: string;
-  course_name: string;
+export interface SubjectInsight {
+  subject_id: string;
+  subject_name: string;
   present: number;
   total: number;
   percentage: number;
 }
 
-export interface AnalyticsResponse {
-  overall_present: number;
-  overall_total: number;
-  overall_percentage: number;
-  courses: AnalyticsCourse[];
+export interface StudentInsightGroup {
+  semester_id: string;
+  semester_name: string;
+  student_id: string;
+  student_name: string;
+  subjects: SubjectInsight[];
 }
+
+export interface CollegeProfile {
+  college_id: string;
+  college_name: string;
+  logo_base64?: string;
+  updated_at: string;
+}
+
+const routePlaceholder = { types: "internal" };
+export default routePlaceholder;
